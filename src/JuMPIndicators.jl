@@ -71,17 +71,6 @@ macro implies(m, lhs, rhs)
                 $(_condition(lhs)),
                 $(_condition(rhs))))
     end
-
-    # if @capture(ex, op1_(l1_, r1_) => op2_(l2_, r2_))
-    #     quote
-    #         imp = Implication(
-    #             Condition($(esc(op1)), $(esc(l1)), $(esc(r1))),
-    #             Condition($(esc(op2)), $(esc(l2)), $(esc(r2))))
-    #         implies!(m, imp)
-    #     end
-    # else
-    #     error("Could not parse: $ex. Expected `@implies(m, x <= 0 => y == 2)`")
-    # end
 end
 
 

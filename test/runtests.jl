@@ -36,3 +36,57 @@ end
         @test getvalue(y) ≈ 1
     end
 end
+
+@testset "dynamics" begin
+    function update(x)
+        @disjunction if x <= 0
+            1
+        else
+            -1
+        end
+    end
+
+    @testset "mixed integer" begin
+        m = Model(solver=CbcSolver())
+        @variable m -0.5 <= x <= 0.5
+
+        ys = [x]
+        for i in 1:3
+            push!(ys, update(ys[end]))
+        end
+
+        @objective m Max sum(ys)
+        solve(m)
+        @test getvalue.(ys) ≈ [0, 1, -1, 1]
+    end
+
+    @testset "seeded positive" begin
+        m = Model(solver=CbcSolver())
+        @variable m -0.5 <= x <= 0.5
+        setvalue(x, 0.5)
+
+        ys = [x]
+        for i in 1:3
+            push!(ys, update(ys[end]))
+        end
+
+        @objective m Max sum(ys)
+        solve(m)
+        @test getvalue.(ys) ≈ [0.5, -1, 1, -1]
+    end
+
+    @testset "seeded negative" begin
+        m = Model(solver=CbcSolver())
+        @variable m -0.5 <= x <= 0.5
+        setvalue(x, -0.5)
+
+        ys = [x]
+        for i in 1:3
+            push!(ys, update(ys[end]))
+        end
+
+        @objective m Max sum(ys)
+        solve(m)
+        @test getvalue.(ys) ≈ [0, 1, -1, 1]
+    end
+end
