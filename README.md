@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/rdeits/JuMPIndicators.jl.svg?branch=master)](https://travis-ci.org/rdeits/JuMPIndicators.jl) [![codecov.io](http://codecov.io/github/rdeits/JuMPIndicators.jl/coverage.svg?branch=master)](http://codecov.io/github/rdeits/JuMPIndicators.jl?branch=master)
 
-This package provides basic automatic generation of indicator variables, which allows (limited) statements of the form `condition` *implies* `constraint` in convex optimizations. It does so by automatically introducing binary indicator variables as necessary, and by using interval arithmetic to choose an appropriate big-M formulation. 
+This package is built on top of [JuMP](https://github.com/JuliaOpt/JuMP.jl) and provides basic automatic generation of indicator variables, which allow (limited) statements of the form `condition` *implies* `constraint` in convex optimizations. It does so by automatically introducing binary indicator variables as necessary, and by using interval arithmetic to choose an appropriate big-M formulation.
 
 # Usage
 
