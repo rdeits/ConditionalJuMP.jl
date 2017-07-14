@@ -5,15 +5,17 @@ using JuMP: AbstractJuMPScalar
 using MacroTools: @capture
 using IntervalArithmetic: Interval, mid, radius
 
+export @disjunction,
+    @implies,
+    upperbound,
+    lowerbound
+
 getmodel(x::JuMP.Variable) = x.m
 getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
 
-struct Condition{Op, T1, T2}
-    op::Op
-    lhs::T1
-    rhs::T2
-end
-
+"""
+Like JuMP.getvalue, but never throws warnings for unset variables
+"""
 function _getvalue(x::JuMP.AffExpr)
     ret = x.constant
     for i in eachindex(x.vars)
@@ -24,6 +26,12 @@ end
 
 _getvalue(x::Variable) = JuMP._getValue(x)
 _getvalue(x::Number) = x
+
+struct Condition{Op, T1, T2}
+    op::Op
+    lhs::T1
+    rhs::T2
+end
 
 @enum TriState no yes maybe
 
@@ -56,20 +64,34 @@ end
 
 Base.show(io::IO, d::Disjunction) = print(io, "(", join(d.members, " ⊻ "), ")")
 
-function _condition(ex::Expr)
-    if @capture(ex, op1_(l1_, r1_) => op2_(l2_, r2_))
-        quote
+macro implies(m, lhs, rhs)
+    quote
+        implies!($(esc(m)), 
             Implication(
-                Condition($(esc(op1)), $(esc(l1)), $(esc(r1))),
-                Condition($(esc(op2)), $(esc(l2)), $(esc(r2))))
-                
-        end
-    elseif @capture(ex, op_(lhs_, rhs_))
+                $(_condition(lhs)),
+                $(_condition(rhs))))
+    end
+
+    # if @capture(ex, op1_(l1_, r1_) => op2_(l2_, r2_))
+    #     quote
+    #         imp = Implication(
+    #             Condition($(esc(op1)), $(esc(l1)), $(esc(r1))),
+    #             Condition($(esc(op2)), $(esc(l2)), $(esc(r2))))
+    #         implies!(m, imp)
+    #     end
+    # else
+    #     error("Could not parse: $ex. Expected `@implies(m, x <= 0 => y == 2)`")
+    # end
+end
+
+
+function _condition(ex::Expr)
+    if @capture(ex, op_(lhs_, rhs_))
         quote
             Condition($(esc(op)), $(esc(lhs)), $(esc(rhs)))
         end
     else
-        error("Could not parse: $ex")
+        error("Could not parse: $ex. Expected `@condition(x <= 0)`")
     end
 end
 
@@ -97,6 +119,14 @@ function require!(m::Model, c::Condition{typeof(==)})
     constraint
 end
 
+function implies!(m::Model, imp::Implication)
+    comp = complement(imp.lhs)
+    z = @variable(m, category=:Bin, basename="z")
+    implies!(m, z, imp.lhs)
+    implies!(m, z, imp.rhs)
+    implies!(m, 1 - z, comp)
+end
+
 function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(<=)})
     g = c.lhs - c.rhs
     M = upperbound(g)
@@ -106,10 +136,20 @@ end
 function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(==)})
     g = c.lhs - c.rhs
     M_u = upperbound(g)
+    @assert isfinite(M_u)
     @constraint(m, c.lhs - c.rhs <= M_u * (1 - z))
-    M_l = -upperbound(-g)
+    M_l = lowerbound(g)
+    @assert isfinite(M_l)
     @constraint(m, c.lhs - c.rhs >= M_l * (1 - z))
 end 
+
+function add_indicator!(m, i1::Implication, i2::Implication)
+    z = @variable(m, category=:Bin, basename="z")
+    implies!(m, z, i1.lhs)
+    implies!(m, z, i1.rhs)
+    implies!(m, 1 - z, i2.lhs)
+    implies!(m, 1 - z, i2.rhs)
+end
 
 function disjunction!(m::Model, i1::Implication, i2::Implication)
     s1 = satisfied(i1.lhs)
@@ -123,11 +163,7 @@ function disjunction!(m::Model, i1::Implication, i2::Implication)
     elseif s1 == no && s2 == no
         error("Neither $(i1.rhs) nor $(i2.rhs) can be satisfied using the values currently set to the model variables")
     else
-        z = @variable(m, category=:Bin, basename="z")
-        implies!(m, z, i1.lhs)
-        implies!(m, z, i1.rhs)
-        implies!(m, 1 - z, i2.lhs)
-        implies!(m, 1 - z, i2.rhs)
+        add_indicator!(m, i1, i2)
     end
     nothing
 end
