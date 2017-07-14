@@ -14,15 +14,29 @@ struct Condition{Op, T1, T2}
     rhs::T2
 end
 
-_getvalue(x::AbstractJuMPScalar) = getvalue(x)
+function _getvalue(x::JuMP.AffExpr)
+    ret = x.constant
+    for i in eachindex(x.vars)
+        ret += x.coeffs[i] * _getvalue(x.vars[i])
+    end
+    ret
+end
+
+_getvalue(x::Variable) = JuMP._getValue(x)
 _getvalue(x::Number) = x
 
-function _getvalue(c::Condition)
+@enum TriState no yes maybe
+
+function satisfied(c::Condition)
     lhs = _getvalue(c.lhs)
     rhs = _getvalue(c.rhs)
-    @assert !isnan(lhs)
-    @assert !isnan(rhs)
-    c.op(lhs, rhs)
+    if isnan(lhs) || isnan(rhs)
+        maybe
+    elseif c.op(lhs, rhs)
+        yes
+    else
+        no
+    end
 end
 
 Base.show(io::IO, c::Condition) = print(io, "(", c.lhs, " ", c.op, " ", c.rhs, ")")
@@ -97,45 +111,25 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(==)})
     @constraint(m, c.lhs - c.rhs >= M_l * (1 - z))
 end 
 
-function setup_disjunction_binary!(m, d::Disjunction)
-    @assert length(d.members) == 2
-    z = @variable(m, category=:Bin, basename="z")
-    implies!(m, z, d.members[1].lhs)
-    implies!(m, z, d.members[1].rhs)
-    implies!(m, 1 - z, d.members[2].lhs)
-    implies!(m, 1 - z, d.members[2].rhs)
-    z
-end
-
-const Assignment = Pair{<:AbstractVector{Variable}, <:AbstractVector{<:Number}}
-
-function with_assignments(f::Function, m::Model, assignments::Assignment...)
-    for assignment in assignments
-        JuMP.setvalue.(assignment.first, assignment.second)
-        f()
-    end
-end
-
-function apply_disjunction!(m, d::Disjunction)
-    for imp in d.members
-        if _getvalue(imp.lhs)
-            require!(m, imp.lhs)
-            require!(m, imp.rhs)
-            break
-        end
-    end
-end
-
-setup_disjunctions!(m::Model) = setup_disjunction_binary!.(m, get(m.ext, :disjunctions, []))
-
-function setup_disjunctions!(m::Model, assignments::Assignment...)
-    with_assignments(m, assignments...) do
-        apply_disjunction!.(m, get(m.ext, :disjunctions, []))
-    end
-end
-
 function disjunction!(m::Model, i1::Implication, i2::Implication)
-    push!(get!(m.ext, :disjunctions, Disjunction[]), Disjunction([i1, i2]))
+    s1 = satisfied(i1.lhs)
+    s2 = satisfied(i2.lhs)
+    if s1 == yes || (s1 == maybe && s2 == no)
+        require!(m, i1.lhs)
+        require!(m, i1.rhs)
+    elseif s2 == yes || (s1 == no && s2 == maybe)
+        require!(m, i2.lhs)
+        require!(m, i2.rhs)
+    elseif s1 == no && s2 == no
+        error("Neither $(i1.rhs) nor $(i2.rhs) can be satisfied using the values currently set to the model variables")
+    else
+        z = @variable(m, category=:Bin, basename="z")
+        implies!(m, z, i1.lhs)
+        implies!(m, z, i1.rhs)
+        implies!(m, 1 - z, i2.lhs)
+        implies!(m, 1 - z, i2.rhs)
+    end
+    nothing
 end
 
 macro disjunction(ex)
