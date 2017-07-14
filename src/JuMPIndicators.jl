@@ -142,7 +142,6 @@ end
 function setup_indicator!(m::Model, imp::Implication)
     sat = satisfied(imp.lhs)
     comp = complement(imp.lhs)
-    @show sat imp comp
     if sat == yes
         require!(m, imp.lhs)
         require!(m, imp.rhs)
