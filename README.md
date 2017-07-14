@@ -144,7 +144,11 @@ for i in 1:3
 end
 
 @objective m Max sum(ys)
+
+# setup_indicators!() uses the data recorded by the `@disjunction` macro to set
+# up the necessary binary variables to enforce the `if` statement.
 setup_indicators!(m)
+
 solve(m)
 @assert getvalue.(ys) ≈ [0, 1, -1, 1]
 ```
