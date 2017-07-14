@@ -96,7 +96,11 @@ upperbound(x::Variable) = JuMP.getupperbound(x)
 
 function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
     intervals = [Interval(getlowerbound(v), getupperbound(v)) for v in e.vars]
-    ex_bounds = e.coeffs' * intervals + e.constant
+    if isempty(intervals)
+        ex_bounds = Interval(e.constant, e.constant)
+    else
+        ex_bounds = e.coeffs' * intervals + e.constant
+    end
     mid(ex_bounds) + radius(ex_bounds)
 end
 
