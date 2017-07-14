@@ -19,6 +19,7 @@ end
         @implies m x <= 0 y == 3
         @implies m -x <= 0 y == 1
         @objective m Min x
+        setup_indicators!(m)
         solve(m)
         @test getvalue(x) ≈ lowerbound(x)
         @test getvalue(y) ≈ 3
@@ -31,6 +32,7 @@ end
         @implies m x <= 0 y == 3
         @implies m -x <= 0 y == 1
         @objective m Max x
+        setup_indicators!(m)
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
         @test getvalue(y) ≈ 1
@@ -56,6 +58,7 @@ end
         end
 
         @objective m Max sum(ys)
+        setup_indicators!(m)
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end
@@ -63,7 +66,6 @@ end
     @testset "seeded positive" begin
         m = Model(solver=CbcSolver())
         @variable m -0.5 <= x <= 0.5
-        setvalue(x, 0.5)
 
         ys = [x]
         for i in 1:3
@@ -71,6 +73,7 @@ end
         end
 
         @objective m Max sum(ys)
+        setup_indicators!(m, x=>0.5)
         solve(m)
         @test getvalue.(ys) ≈ [0.5, -1, 1, -1]
     end
@@ -78,7 +81,6 @@ end
     @testset "seeded negative" begin
         m = Model(solver=CbcSolver())
         @variable m -0.5 <= x <= 0.5
-        setvalue(x, -0.5)
 
         ys = [x]
         for i in 1:3
@@ -86,6 +88,7 @@ end
         end
 
         @objective m Max sum(ys)
+        setup_indicators!(m, x=>-0.5)
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end

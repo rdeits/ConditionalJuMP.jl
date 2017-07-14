@@ -7,6 +7,7 @@ using IntervalArithmetic: Interval, mid, radius
 
 export @disjunction,
     @implies,
+    setup_indicators!,
     upperbound,
     lowerbound
 
@@ -89,10 +90,8 @@ macro condition(ex)
 end
 
 lowerbound(x::Number) = x
-upperbound(x::Number) = x
-
 lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
-
+upperbound(x::Number) = x
 upperbound(x::Variable) = JuMP.getupperbound(x)
 
 function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
@@ -109,11 +108,7 @@ function require!(m::Model, c::Condition{typeof(==)})
 end
 
 function implies!(m::Model, imp::Implication)
-    comp = complement(imp.lhs)
-    z = @variable(m, category=:Bin, basename="z")
-    implies!(m, z, imp.lhs)
-    implies!(m, z, imp.rhs)
-    implies!(m, 1 - z, comp)
+    push!(get!(m.ext, :indicators, []), imp)
 end
 
 function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(<=)})
@@ -141,6 +136,33 @@ function add_indicator!(m, i1::Implication, i2::Implication)
 end
 
 function disjunction!(m::Model, i1::Implication, i2::Implication)
+    push!(get!(m.ext, :indicators, []), Disjunction([i1, i2]))
+end
+
+function setup_indicator!(m::Model, imp::Implication)
+    sat = satisfied(imp.lhs)
+    comp = complement(imp.lhs)
+    @show sat imp comp
+    if sat == yes
+        require!(m, imp.lhs)
+        require!(m, imp.rhs)
+    elseif sat == no
+        require!(m, comp)
+    else
+        @assert sat == maybe
+        z = @variable(m, category=:Bin, basename="z")
+        implies!(m, z, imp.lhs)
+        implies!(m, z, imp.rhs)
+        implies!(m, 1 - z, comp)
+    end
+end
+
+function setup_indicator!(m::Model, d::Disjunction)
+    @assert length(d.members) == 2
+    setup_disjunction!(m, d.members[1], d.members[2])
+end
+
+function setup_disjunction!(m::Model, i1::Implication, i2::Implication)
     s1 = satisfied(i1.lhs)
     s2 = satisfied(i2.lhs)
     if s1 == yes || (s1 == maybe && s2 == no)
@@ -154,7 +176,42 @@ function disjunction!(m::Model, i1::Implication, i2::Implication)
     else
         add_indicator!(m, i1, i2)
     end
-    nothing
+end
+
+function _setup_indicators!(m::Model)
+    for x in get(m.ext, :indicators, [])
+        setup_indicator!(m, x)
+    end
+    empty!(m.ext[:indicators])
+end
+
+function setup_indicators!(m::Model)
+    prev = copy(m.colVal)
+    m.colVal .= NaN
+    _setup_indicators!(m)
+    m.colVal[1:length(prev)] .= prev
+    m
+end
+
+function with_assignment!(f::Function, m::Model, assignment::Pair{Variable, <:Number})
+    prev = _getvalue(assignment.first)
+    setvalue(assignment.first, assignment.second)
+    f()
+    setvalue(assignment.first, prev)
+end
+
+function with_assignment!(f::Function, m::Model, assignment::Pair{<:AbstractArray{Variable}, <:AbstractArray{<:Number}})
+    prev = _getvalue.(assignment.first)
+    setvalue.(assignment.first, assignment.second)
+    f()
+    setvalue.(assignment.first, prev)
+end
+
+function setup_indicators!(m::Model, assignment, assignments...)
+    with_assignment!(m, assignment) do
+        _setup_indicators!(m, assignments...)
+    end
+    m
 end
 
 macro disjunction(ex)
