@@ -93,3 +93,9 @@ end
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end
 end
+
+@testset "examples" begin
+    @testset "block with wall" begin
+        include("../examples/block_with_wall.jl")
+    end
+end
