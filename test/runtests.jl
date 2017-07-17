@@ -96,6 +96,8 @@ end
 
 @testset "examples" begin
     @testset "block with wall" begin
-        include("../examples/block_with_wall.jl")
+        if Pkg.installed("Gurobi") !== nothing
+            include("../examples/block_with_wall.jl")
+        end
     end
 end
