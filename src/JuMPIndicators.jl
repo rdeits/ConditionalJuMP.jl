@@ -4,6 +4,7 @@ using JuMP
 using JuMP: AbstractJuMPScalar
 using MacroTools: @capture
 using IntervalArithmetic: Interval, mid, radius
+import Base: <=, ==, >=
 
 export @disjunction,
     @implies,
@@ -28,15 +29,36 @@ end
 _getvalue(x::Variable) = JuMP._getValue(x)
 _getvalue(x::Number) = x
 
-struct Condition{Op, T1, T2}
+struct Comparison{Op, T1, T2}
     op::Op
     lhs::T1
     rhs::T2
 end
 
+getmodel(c::Comparison) = getmodel(c.lhs)
+
+for op in [:(<=), :(==)]
+    for T1 in [AbstractJuMPScalar, Number]
+        for T2 in [AbstractJuMPScalar, Number]
+            if T1 === Number && T2 === Number
+                continue
+            end
+            @eval $(op)(x::$(T1), y::$(T2)) = Comparison($(op), x - y, 0)
+            @eval $(op)(x::AbstractArray{<: $(T1)}, y::AbstractArray{<: $(T2)}) = Comparison($(op), x .- y, 0)
+        end
+    end
+end
+
+# (<=)(x::JuMP.AbstractJuMPScalar, y::Number) = Comparison(<=, x - y, 0)
+# (<=)(x::Number, y::JuMP.AbstractJuMPScalar) = Comparison(<=, x - y, 0)
+# (<=)(x::JuMP.AbstractJuMPScalar, y::JuMP.AbstractJuMPScalar) = Comparison(<=, x - y, 0)
+# (==)(x::Number, y::JuMP.AbstractJuMPScalar) = Comparison(==, x - y, 0)
+# (==)(x::JuMP.AbstractJuMPScalar, y::Number) = Comparison(==, x - y, 0)
+# (==)(x::JuMP.AbstractJuMPScalar, y::JuMP.AbstractJuMPScalar) = Comparison(==, x - y, 0)
+
 @enum TriState no yes maybe
 
-function satisfied(c::Condition)
+function satisfied(c::Comparison)
     lhs = _getvalue(c.lhs)
     rhs = _getvalue(c.rhs)
     if isnan(lhs) || isnan(rhs)
@@ -48,11 +70,11 @@ function satisfied(c::Condition)
     end
 end
 
-Base.show(io::IO, c::Condition) = print(io, "(", c.lhs, " ", c.op, " ", c.rhs, ")")
+Base.show(io::IO, c::Comparison) = print(io, "(", c.lhs, " ", c.op, " ", c.rhs, ")")
 
-complement(c::Condition{typeof(<=)}) = Condition(c.op, -c.lhs, -c.rhs)
+complement(c::Comparison{typeof(<=)}) = Comparison(c.op, -c.lhs, -c.rhs)
 
-struct Implication{C1 <: Condition, C2 <: Condition}
+struct Implication{C1 <: Comparison, C2 <: Comparison}
     lhs::C1
     rhs::C2
 end
@@ -65,28 +87,28 @@ end
 
 Base.show(io::IO, d::Disjunction) = print(io, "(", join(d.members, " ⊻ "), ")")
 
-macro implies(m, lhs, rhs)
-    quote
-        implies!($(esc(m)), 
-            Implication(
-                $(_condition(lhs)),
-                $(_condition(rhs))))
-    end
-end
+# macro implies(m, lhs, rhs)
+#     quote
+#         implies!($(esc(m)), 
+#             Implication(
+#                 $(_comparison(lhs)),
+#                 $(_comparison(rhs))))
+#     end
+# end
 
 
-function _condition(ex::Expr)
+function _comparison(ex::Expr)
     if @capture(ex, op_(lhs_, rhs_))
         quote
-            Condition($(esc(op)), $(esc(lhs)), $(esc(rhs)))
+            Comparison($(esc(op)), $(esc(lhs)), $(esc(rhs)))
         end
     else
-        error("Could not parse: $ex. Expected `@condition(x <= 0)`")
+        error("Could not parse: $ex. Expected `@comparison(x <= 0)`")
     end
 end
 
-macro condition(ex)
-    _condition(ex)
+macro comparison(ex)
+    _comparison(ex)
 end
 
 lowerbound(x::Number) = x
@@ -104,8 +126,8 @@ function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
     mid(ex_bounds) + radius(ex_bounds)
 end
 
-require!(m::Model, c::Condition{typeof(<=)}) = @constraint(m, c.lhs <= c.rhs)
-function require!(m::Model, c::Condition{typeof(==)})
+require!(m::Model, c::Comparison{typeof(<=)}) = @constraint(m, c.lhs <= c.rhs)
+function require!(m::Model, c::Comparison{typeof(==)})
     constraint = @constraint(m, c.lhs == c.rhs)
     setvalue(c.lhs, c.rhs)
     constraint
@@ -115,20 +137,30 @@ function implies!(m::Model, imp::Implication)
     push!(get!(m.ext, :indicators, []), imp)
 end
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(<=)})
-    g = c.lhs - c.rhs
-    M = upperbound(g)
-    @constraint m c.lhs <= c.rhs + M * (1 - z)
+function implies!(m::Model, z::AbstractJuMPScalar, c::Comparison{typeof(<=)})
+    g = c.lhs .- c.rhs
+    M = upperbound.(g)
+    @assert all(isfinite(M))
+    if isa(g, AbstractArray)
+        @constraint m c.lhs .<= c.rhs .+ M .* (1 .- z)
+    else
+        @constraint m c.lhs <= c.rhs + M * (1 - z)
+    end
 end 
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Condition{typeof(==)})
-    g = c.lhs - c.rhs
-    M_u = upperbound(g)
-    @assert isfinite(M_u)
-    @constraint(m, c.lhs - c.rhs <= M_u * (1 - z))
-    M_l = lowerbound(g)
-    @assert isfinite(M_l)
-    @constraint(m, c.lhs - c.rhs >= M_l * (1 - z))
+function implies!(m::Model, z::AbstractJuMPScalar, c::Comparison{typeof(==)})
+    g = c.lhs .- c.rhs
+    M_u = upperbound.(g)
+    @assert all(isfinite, M_u)
+    M_l = lowerbound.(g)
+    @assert all(isfinite, M_l)
+    if isa(g, AbstractArray)
+        @constraint(m, c.lhs .- c.rhs .<= M_u .* (1 .- z))
+        @constraint(m, c.lhs .- c.rhs .>= M_l .* (1 .- z))
+    else
+        @constraint(m, c.lhs - c.rhs <= M_u * (1 - z))
+        @constraint(m, c.lhs - c.rhs >= M_l * (1 - z))
+    end
 end 
 
 function add_indicator!(m, i1::Implication, i2::Implication)
@@ -217,32 +249,48 @@ function setup_indicators!(m::Model, assignment, assignments...)
     m
 end
 
-macro disjunction(ex)
-    body, cond_expr = if @capture(ex, if c1_; v1_; else v2_; end)
-        cond_expr = _condition(c1)
-        quote
-            cond = $(_condition(c1))
-            comp = complement(cond)
-            m = getmodel(cond.lhs)
-            y = $(Expr(:macrocall, Symbol("@variable"), :m, Expr(:(=), esc(:basename), "y")))
-            setlowerbound(y, min(lowerbound($(esc(v1))), lowerbound($(esc(v2)))))
-            setupperbound(y, max(upperbound($(esc(v1))), upperbound($(esc(v2)))))
-            disjunction!(m, 
-                Implication(cond, Condition(==, y, $(esc(v1)))),
-                Implication(comp, Condition(==, y, $(esc(v2)))))
-            y
-        end, cond_expr
-    else
-        error("Could not parse: $ex")
-    end
-    quote
-        if isa($(cond_expr).lhs, AbstractJuMPScalar)
-            $body
-        else
-            $(esc(ex))
-        end
-    end
+function Base.ifelse(c::Comparison, v1, v2)
+    ifelse(c, [v1], [v2])[1]
 end
+
+function Base.ifelse(c::Comparison, v1::AbstractArray, v2::AbstractArray)
+    @assert size(v1) == size(v2)
+    m = getmodel(c)
+    y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
+    setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
+    setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
+    disjunction!(m,
+        Implication(c, y == v1),
+        Implication(complement(c), y == v2))
+    y
+end
+
+# macro disjunction(ex)
+#     body, cond_expr = if @capture(ex, if c1_; v1_; else v2_; end)
+#         cond_expr = _comparison(c1)
+#         quote
+#             cond = $(_comparison(c1))
+#             comp = complement(cond)
+#             m = getmodel(cond.lhs)
+#             y = $(Expr(:macrocall, Symbol("@variable"), :m, Expr(:(=), esc(:basename), "y")))
+#             setlowerbound(y, min(lowerbound($(esc(v1))), lowerbound($(esc(v2)))))
+#             setupperbound(y, max(upperbound($(esc(v1))), upperbound($(esc(v2)))))
+#             disjunction!(m, 
+#                 Implication(cond, Comparison(==, y, $(esc(v1)))),
+#                 Implication(comp, Comparison(==, y, $(esc(v2)))))
+#             y
+#         end, cond_expr
+#     else
+#         error("Could not parse: $ex")
+#     end
+#     quote
+#         if isa($(cond_expr).lhs, AbstractJuMPScalar)
+#             $body
+#         else
+#             $(esc(ex))
+#         end
+#     end
+# end
             
 
 end
