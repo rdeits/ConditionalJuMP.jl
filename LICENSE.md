@@ -1,4 +1,4 @@
-The JuMPIndicators.jl package is licensed under the MIT "Expat" License:
+The ConditionalJuMP.jl package is licensed under the MIT "Expat" License:
 
 > Copyright (c) 2017: Robin Deits.
 > 

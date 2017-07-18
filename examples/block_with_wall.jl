@@ -1,5 +1,5 @@
 using JuMP
-using JuMPIndicators
+using ConditionalJuMP
 using Gurobi
 
 struct State{T}

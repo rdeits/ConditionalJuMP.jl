@@ -1,4 +1,4 @@
-using JuMPIndicators
+using ConditionalJuMP
 using JuMP
 using Cbc
 using Base.Test
@@ -17,7 +17,7 @@ end
         @variable m -5 <= x <= 5
         @variable m -5 <= y <= 5
         @implies m x <= 0 y == 3
-        @implies m -x <= 0 y == 1
+        @implies m x >= 0 y == 1
         @objective m Min x
         setup_indicators!(m)
         solve(m)
@@ -30,12 +30,38 @@ end
         @variable m -5 <= x <= 5
         @variable m -5 <= y <= 5
         @implies m x <= 0 y == 3
-        @implies m -x <= 0 y == 1
+        @implies m x >= 0 y == 1
         @objective m Max x
         setup_indicators!(m)
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
         @test getvalue(y) ≈ 1
+    end
+end
+
+@testset "vector" begin
+    @testset "min" begin
+        m = Model(solver=CbcSolver())
+        @variable m -5 <= x <= 5
+        @variable m -5 <= y[1:2] <= 5
+        @implies m x <= 0 y == [3, 3.5]
+        @objective m Min x
+        setup_indicators!(m)
+        solve(m)
+        @test getvalue(x) ≈ lowerbound(x)
+        @test getvalue.(y) ≈ [3, 3.5]
+    end
+
+    @testset "max" begin
+        m = Model(solver=CbcSolver())
+        @variable m -5 <= x <= 5
+        @variable m -5 <= y[1:2] <= 5
+        @implies m x >= 0 y == [1, -1]
+        @objective m Max x
+        setup_indicators!(m)
+        solve(m)
+        @test getvalue(x) ≈ upperbound(x)
+        @test getvalue.(y) ≈ [1, -1]
     end
 end
 

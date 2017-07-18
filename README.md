@@ -1,6 +1,6 @@
-# JuMPIndicators
+# ConditionalJuMP
 
-[![Build Status](https://travis-ci.org/rdeits/JuMPIndicators.jl.svg?branch=master)](https://travis-ci.org/rdeits/JuMPIndicators.jl) [![codecov.io](http://codecov.io/github/rdeits/JuMPIndicators.jl/coverage.svg?branch=master)](http://codecov.io/github/rdeits/JuMPIndicators.jl?branch=master)
+[![Build Status](https://travis-ci.org/rdeits/ConditionalJuMP.jl.svg?branch=master)](https://travis-ci.org/rdeits/ConditionalJuMP.jl) [![codecov.io](http://codecov.io/github/rdeits/ConditionalJuMP.jl/coverage.svg?branch=master)](http://codecov.io/github/rdeits/ConditionalJuMP.jl?branch=master)
 
 This package is built on top of [JuMP](https://github.com/JuliaOpt/JuMP.jl) and provides basic automatic generation of indicator variables, which allow (limited) statements of the form `condition` *implies* `constraint` in convex optimizations. It does so by automatically introducing binary indicator variables as necessary, and by using interval arithmetic to choose an appropriate big-M formulation.
 
@@ -9,7 +9,7 @@ This package is built on top of [JuMP](https://github.com/JuliaOpt/JuMP.jl) and 
 ## Basic Implications
 
 ```julia
-using JuMP, Cbc, JuMPIndicators
+using JuMP, Cbc, ConditionalJuMP
 
 m = Model(solver=CbcSolver())
 @variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
@@ -167,7 +167,7 @@ where `z` is restricted to be either 0 or 1.
 
 If `M` is sufficiently large, then when `z == 0`, `x` is essentially unbounded. But when `z == 1`, the constraint reduces to `x <= 0` as desired. The key to successfully applying this formulation is choosing the right value of `M`. Too small an `M` will restrict `x` even when `z == 0`. Too large a value will create numerical difficulties in the solver. 
 
-JuMPIndicators.jl uses [IntervalArithmetic.jl](https://github.com/JuliaIntervals/IntervalArithmetic.jl) to solve for an appropriate value of `M` automatically. The idea is that if we know the bounds on `x` (from the upper and lower bounds in the JuMP model), we can compute exactly how large M needs to be. Even more complicated expressions like `z == 1 implies (2x + 3y + z - 2 <= 5x)` can be handled automatically because IntervalArithmetic.jl already knows how to propagate intervals through various functions. 
+ConditionalJuMP.jl uses [IntervalArithmetic.jl](https://github.com/JuliaIntervals/IntervalArithmetic.jl) to solve for an appropriate value of `M` automatically. The idea is that if we know the bounds on `x` (from the upper and lower bounds in the JuMP model), we can compute exactly how large M needs to be. Even more complicated expressions like `z == 1 implies (2x + 3y + z - 2 <= 5x)` can be handled automatically because IntervalArithmetic.jl already knows how to propagate intervals through various functions. 
 
 As an example, let's look back at the first model:
 
