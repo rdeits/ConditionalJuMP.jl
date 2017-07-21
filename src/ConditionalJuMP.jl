@@ -89,12 +89,6 @@ end
 
 Base.show(io::IO, cv::Implication) = print(io, cv.rhs, " if ", cv.lhs)
 
-# struct Disjunction{T <: Implication}
-#     members::Vector{T}
-# end
-
-# Base.show(io::IO, d::Disjunction) = print(io, "(", join(d.members, " ⊻ "), ")")
-
 struct ComplementNotDefined
 end
 
@@ -158,9 +152,6 @@ function Base.ifelse(c::Conditional, v1, v2)
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
     implies!(m, c, @conditional y == v1)
     implies!(m, !c, @conditional y == v2)
-    # disjunction!(m,
-    #     Implication(c, @conditional y == v1),
-    #     Implication(complement(c), @conditional y == v2))
     y
 end
 
@@ -172,9 +163,6 @@ function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
     implies!(m, c, @conditional y == v1)
     implies!(m, !c, @conditional y == v2)
-    # disjunction!(m,
-    #     Implication(c, @conditional y == v1),
-    #     Implication(complement(c), @conditional y == v2))
     y
 end
 
@@ -247,57 +235,6 @@ function _setup_indicators!(m::Model)
     end
     empty!(m.ext[:implications])
 end
-
-
-# function add_indicator!(m, i1::Implication, i2::Implication)
-#     z = @variable(m, category=:Bin, basename="z")
-#     implies!(m, z, i1.lhs)
-#     implies!(m, z, i1.rhs)
-#     implies!(m, 1 - z, i2.lhs)
-#     implies!(m, 1 - z, i2.rhs)
-# end
-
-# function disjunction!(m::Model, i1::Implication, i2::Implication)
-#     push!(get!(m.ext, :indicators, []), Disjunction([i1, i2]))
-# end
-
-# function setup_indicator!(m::Model, imp::Implication)
-#     sat = satisfied(imp.lhs)
-#     comp = complement(imp.lhs)
-#     if sat == yes
-#         require!(m, imp.lhs)
-#         require!(m, imp.rhs)
-#     elseif sat == no
-#         require!(m, comp)
-#     else
-#         @assert sat == maybe
-#         z = @variable(m, category=:Bin, basename="z")
-#         implies!(m, z, imp.lhs)
-#         implies!(m, z, imp.rhs)
-#         implies!(m, 1 - z, comp)
-#     end
-# end
-
-# function setup_indicator!(m::Model, d::Disjunction)
-#     @assert length(d.members) == 2
-#     setup_disjunction!(m, d.members[1], d.members[2])
-# end
-
-# function setup_disjunction!(m::Model, i1::Implication, i2::Implication)
-#     s1 = satisfied(i1.lhs)
-#     s2 = satisfied(i2.lhs)
-#     if s1 == yes || (s1 == maybe && s2 == no)
-#         require!(m, i1.lhs)
-#         require!(m, i1.rhs)
-#     elseif s2 == yes || (s1 == no && s2 == maybe)
-#         require!(m, i2.lhs)
-#         require!(m, i2.rhs)
-#     elseif s1 == no && s2 == no
-#         error("Neither $(i1.rhs) nor $(i2.rhs) can be satisfied using the values currently set to the model variables")
-#     else
-#         add_indicator!(m, i1, i2)
-#     end
-# end
 
 function setup_indicators!(m::Model)
     prev = copy(m.colVal)
