@@ -147,6 +147,42 @@ end
     end
 end
 
+@testset "disjunctions" begin
+    @testset "simple three-way disjunction" begin
+        m = Model(solver=CbcSolver())
+        @variable m -1 <= x <= 1
+        @variable m -1 <= y <= 1
+        c1 = @conditional(x <= -0.5)
+        c2 = ConditionalJuMP.Conditional(
+            all, 
+            @conditional(x <= 0.5), 
+            @conditional(x >= -0.5))
+        c3 = @conditional(x >= 0.5)
+        implies!(m, c2, @conditional(y == -0.5))
+        disjunction!(m, c1, c2, c3)
+        @constraint(m, x == 0)
+        setup_indicators!(m)
+        solve(m)
+        @test getvalue(x) ≈ 0
+        @test getvalue(y) ≈ -0.5
+    end
+
+    @testset "missing disjunction" begin
+        m = Model(solver=CbcSolver())
+        @variable m -1 <= x <= 1
+        @variable m -1 <= y <= 1
+        c1 = @conditional(x <= -0.5)
+        c2 = ConditionalJuMP.Conditional(
+            all, 
+            @conditional(x <= 0.5), 
+            @conditional(x >= -0.5))
+        c3 = @conditional(x >= 0.5)
+        implies!(m, c2, @conditional(y == -0.5))
+        @constraint(m, x == 0)
+        @test_throws ConditionalJuMP.UnhandledComplementException setup_indicators!(m)
+    end
+end
+
 @testset "examples" begin
     @testset "block with wall" begin
         if Pkg.installed("Gurobi") !== nothing
