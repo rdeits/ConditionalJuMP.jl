@@ -234,6 +234,14 @@ end
 
 IndicatorMap(m::Model) = IndicatorMap(m, Dict{Conditional, Variable}(), Ref(1))
 
+struct UnhandledComplementException <: Exception
+    c::Conditional
+end
+
+function Base.showerror(io::IO, e::UnhandledComplementException)
+    print(io, "The complement of condition $(e.c) cannot be automatically determined. You will need to manually specify a disjunction covering this condition and all of its alternatives")
+end
+
 function getindicator!(m::IndicatorMap, c::Conditional)
     if haskey(m.indicators, c)
         return m.indicators[c]
@@ -244,7 +252,12 @@ function getindicator!(m::IndicatorMap, c::Conditional)
         implies!(m.model, z, c)
         m.idx[] = m.idx[] + 1
         compl = !c
-        if !isa(compl, ComplementNotDefined)
+        if isa(compl, ComplementNotDefined)
+            found = any(c in dis.cases for dis in get(m.model.ext, :disjunctions, Disjunction[]))
+            if !found
+                throw(UnhandledComplementException(c))
+            end
+        else
             implies!(m.model, 1 - z, compl)
         end
         m.indicators[c] = z
