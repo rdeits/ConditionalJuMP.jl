@@ -20,6 +20,10 @@ end
         @implies m x >= 0 y == 1
         @objective m Min x
         setup_indicators!(m)
+
+        # test that the two implications are being represented
+        # by a single binary variable
+        @test sum(m.colCat .== :Bin) == 1
         solve(m)
         @test getvalue(x) ≈ lowerbound(x)
         @test getvalue(y) ≈ 3
@@ -33,6 +37,24 @@ end
         @implies m x >= 0 y == 1
         @objective m Max x
         setup_indicators!(m)
+
+        # test that the two implications are being represented
+        # by a single binary variable
+        @test sum(m.colCat .== :Bin) == 1
+        solve(m)
+        @test getvalue(x) ≈ upperbound(x)
+        @test getvalue(y) ≈ 1
+    end
+
+    @testset "non-disjoint" begin
+        m = Model(solver=CbcSolver())
+        @variable m -5 <= x <= 5
+        @variable m -5 <= y <= 5
+        @implies m x <= -1 y == 3
+        @implies m x >= 1 y == 1
+        @objective m Max x
+        setup_indicators!(m)
+        @test sum(m.colCat .== :Bin) == 2
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
         @test getvalue(y) ≈ 1
@@ -47,6 +69,7 @@ end
         @implies m x <= 0 y == [3, 3.5]
         @objective m Min x
         setup_indicators!(m)
+        @test sum(m.colCat .== :Bin) == 1
         solve(m)
         @test getvalue(x) ≈ lowerbound(x)
         @test getvalue.(y) ≈ [3, 3.5]
@@ -59,6 +82,7 @@ end
         @implies m x >= 0 y == [1, -1]
         @objective m Max x
         setup_indicators!(m)
+        @test sum(m.colCat .== :Bin) == 1
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
         @test getvalue.(y) ≈ [1, -1]
@@ -85,6 +109,7 @@ end
 
         @objective m Max sum(ys)
         setup_indicators!(m)
+        @test sum(m.colCat .== :Bin) == 3
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end
@@ -100,6 +125,7 @@ end
 
         @objective m Max sum(ys)
         setup_indicators!(m, x=>0.5)
+        @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0.5, -1, 1, -1]
     end
@@ -115,6 +141,7 @@ end
 
         @objective m Max sum(ys)
         setup_indicators!(m, x=>-0.5)
+        @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end

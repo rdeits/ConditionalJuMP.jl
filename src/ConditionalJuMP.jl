@@ -4,13 +4,15 @@ using JuMP
 using JuMP: AbstractJuMPScalar
 using MacroTools: @capture
 using IntervalArithmetic: Interval, mid, radius
-import Base: <=, ==, >=
+import Base: <=, ==, >=, !
 
 export @disjunction,
     @implies,
     setup_indicators!,
     upperbound,
     lowerbound
+
+const JExpr = JuMP.GenericAffExpr{Float64, Variable}
 
 getmodel(x::JuMP.Variable) = x.m
 getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
@@ -55,7 +57,30 @@ end
 
 Base.show(io::IO, c::Conditional) = print(io, "(", c.lhs, " ", c.op, " ", c.rhs, ")")
 
-complement(c::Conditional{typeof(<=)}) = Conditional(c.op, -c.lhs, -c.rhs)
+canonicalize(c::Conditional) = c
+canonicalize(c::Conditional{typeof(>=)}) = Conditional(<=, -c.lhs, -c.rhs)
+
+(==)(c1::Conditional{op}, c2::Conditional{op}) where {op} = c1.lhs - c1.rhs == c2.lhs - c2.rhs
+(==)(c1::Conditional, c2::Conditional) = canonicalize(c1) == canonicalize(c2)
+
+Base.hash(c::Conditional{typeof(>=)}, h::UInt) = hash(canonicalize(c), h)
+
+# work-around because JuMP doesn't properly define hash()
+function _hash(x::JuMP.GenericAffExpr, h::UInt)
+    h = hash(x.constant, h)
+    for v in x.vars
+        h = hash(v, h)
+    end
+    for c in x.coeffs
+        h = hash(c, h)
+    end
+    h
+end
+
+function Base.hash(c::Union{<:Conditional{typeof(<=)}, <:Conditional{typeof(==)}}, h::UInt)
+    h = hash(c.op, h)
+    _hash(c.lhs - c.rhs, h)
+end
 
 struct Implication{C1 <: Conditional, C2 <: Conditional}
     lhs::C1
@@ -64,18 +89,17 @@ end
 
 Base.show(io::IO, cv::Implication) = print(io, cv.rhs, " if ", cv.lhs)
 
-struct Disjunction{T <: Implication}
-    members::Vector{T}
+struct ComplementNotDefined
 end
 
-Base.show(io::IO, d::Disjunction) = print(io, "(", join(d.members, " ⊻ "), ")")
+complement(c::Conditional) = ComplementNotDefined()
+complement(c::Conditional{typeof(<=)}) = Conditional(>=, c.lhs, c.rhs)
+complement(c::Conditional{typeof(>=)}) = Conditional(<=, c.lhs, c.rhs)
+(!)(c::Conditional) = complement(c)
 
 macro implies(m, lhs, rhs)
     quote
-        implies!($(esc(m)), 
-            Implication(
-                $(_conditional(lhs)),
-                $(_conditional(rhs))))
+        implies!($(esc(m)), $(_conditional(lhs)), $(_conditional(rhs)))
     end
 end
 
@@ -86,7 +110,7 @@ function _conditional(ex::Expr)
             Conditional($(esc(op)), $(esc(lhs)), $(esc(rhs)))
         end
     else
-        error("Could not parse: $ex. Expected `@conditional(x <= 0)`")
+        error("Could not parse: $ex. Expected `@conditional(x <= y)`")
     end
 end
 
@@ -116,8 +140,30 @@ function require!(m::Model, c::Conditional{typeof(==)})
     constraint
 end
 
-function implies!(m::Model, imp::Implication)
-    push!(get!(m.ext, :indicators, []), imp)
+function implies!(m::Model, c1::Conditional, c2::Conditional)
+    push!(get!(m.ext, :implications, Implication[]), Implication(c1, c2))
+end
+
+function Base.ifelse(c::Conditional, v1, v2)
+    @assert size(v1) == size(v2)
+    m = getmodel(c)
+    y = @variable(m, y, basename="y")
+    setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
+    setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
+    implies!(m, c, @conditional y == v1)
+    implies!(m, !c, @conditional y == v2)
+    y
+end
+
+function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
+    @assert size(v1) == size(v2)
+    m = getmodel(c)
+    y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
+    setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
+    setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
+    implies!(m, c, @conditional y == v1)
+    implies!(m, !c, @conditional y == v2)
+    y
 end
 
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=)})
@@ -146,61 +192,48 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==)})
     end
 end 
 
-function add_indicator!(m, i1::Implication, i2::Implication)
-    z = @variable(m, category=:Bin, basename="z")
-    implies!(m, z, i1.lhs)
-    implies!(m, z, i1.rhs)
-    implies!(m, 1 - z, i2.lhs)
-    implies!(m, 1 - z, i2.rhs)
+const IndicatorMap = Dict{Conditional, Variable}
+
+function _setup_indicator!(m::Model, imp::Implication, indicators::IndicatorMap)
+    # println("Adding indicator for: ", imp)
+    if haskey(indicators, imp.lhs)
+        # println("hit for lhs")
+        implies!(m, indicators[imp.lhs], imp.rhs)
+    elseif haskey(indicators, !(imp.lhs))
+        # println("hit for complement of lhs")
+        implies!(m, 1 - indicators[!(imp.lhs)], imp.rhs)
+    else
+        # println("generating new variable for lhs")
+        z = @variable(m, category=:Bin, basename="z")
+        implies!(m, z, imp.lhs)
+        implies!(m, z, imp.rhs)
+        if !isa(!(imp.lhs), ComplementNotDefined)
+            implies!(m, 1 - z, !(imp.lhs))
+        end
+        indicators[imp.lhs] = z
+    end
+    nothing
 end
 
-function disjunction!(m::Model, i1::Implication, i2::Implication)
-    push!(get!(m.ext, :indicators, []), Disjunction([i1, i2]))
-end
-
-function setup_indicator!(m::Model, imp::Implication)
+function _setup_implication!(m::Model, imp::Implication, indicators::IndicatorMap)
     sat = satisfied(imp.lhs)
-    comp = complement(imp.lhs)
     if sat == yes
         require!(m, imp.lhs)
         require!(m, imp.rhs)
     elseif sat == no
-        require!(m, comp)
+        require!(m, !(imp.lhs))
     else
         @assert sat == maybe
-        z = @variable(m, category=:Bin, basename="z")
-        implies!(m, z, imp.lhs)
-        implies!(m, z, imp.rhs)
-        implies!(m, 1 - z, comp)
-    end
-end
-
-function setup_indicator!(m::Model, d::Disjunction)
-    @assert length(d.members) == 2
-    setup_disjunction!(m, d.members[1], d.members[2])
-end
-
-function setup_disjunction!(m::Model, i1::Implication, i2::Implication)
-    s1 = satisfied(i1.lhs)
-    s2 = satisfied(i2.lhs)
-    if s1 == yes || (s1 == maybe && s2 == no)
-        require!(m, i1.lhs)
-        require!(m, i1.rhs)
-    elseif s2 == yes || (s1 == no && s2 == maybe)
-        require!(m, i2.lhs)
-        require!(m, i2.rhs)
-    elseif s1 == no && s2 == no
-        error("Neither $(i1.rhs) nor $(i2.rhs) can be satisfied using the values currently set to the model variables")
-    else
-        add_indicator!(m, i1, i2)
+        _setup_indicator!(m, imp, indicators)
     end
 end
 
 function _setup_indicators!(m::Model)
-    for x in get(m.ext, :indicators, [])
-        setup_indicator!(m, x)
+    indicators = IndicatorMap()
+    for x in get(m.ext, :implications, Implication[])
+        _setup_implication!(m, x, indicators)
     end
-    empty!(m.ext[:indicators])
+    empty!(m.ext[:implications])
 end
 
 function setup_indicators!(m::Model)
@@ -230,30 +263,6 @@ function setup_indicators!(m::Model, assignment, assignments...)
         _setup_indicators!(m, assignments...)
     end
     m
-end
-
-function Base.ifelse(c::Conditional, v1, v2)
-    @assert size(v1) == size(v2)
-    m = getmodel(c)
-    y = @variable(m, y, basename="y")
-    setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
-    setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    disjunction!(m,
-        Implication(c, @conditional y == v1),
-        Implication(complement(c), @conditional y == v2))
-    y
-end
-
-function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
-    @assert size(v1) == size(v2)
-    m = getmodel(c)
-    y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
-    setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
-    setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    disjunction!(m,
-        Implication(c, @conditional y == v1),
-        Implication(complement(c), @conditional y == v2))
-    y
 end
 
 macro disjunction(ex)
