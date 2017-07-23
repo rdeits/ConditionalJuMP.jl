@@ -8,6 +8,9 @@ import Base: <=, ==, >=, !
 
 export @disjunction,
     @implies,
+    @conditional,
+    implies!,
+    disjunction!,
     setup_indicators!,
     upperbound,
     lowerbound
@@ -109,7 +112,10 @@ complement(c::Conditional{typeof(>=), 2}) = Conditional(<=, c.args[1], c.args[2]
 
 macro implies(m, lhs, rhs)
     quote
-        implies!($(esc(m)), $(_conditional(lhs)), $(_conditional(rhs)))
+        c1 = $(_conditional(lhs))
+        c2 = $(_conditional(rhs))
+        @assert !isa(!c1, ComplementNotDefined)
+        implies!($(esc(m)), c1, c2)
     end
 end
 
@@ -150,9 +156,9 @@ function require!(m::Model, c::Conditional{typeof(==), 2})
     _setvalue(lhs, rhs)
     constraint
 end
+require!(m::Model, ::ComplementNotDefined) = nothing
 
 function implies!(m::Model, c1::Conditional, c2::Conditional)
-    @assert !isa(!c1, ComplementNotDefined)
     push!(get!(m.ext, :implications, Implication[]), Implication(c1, c2))
 end
 
@@ -206,26 +212,66 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), 2}
     end
 end 
 
-const IndicatorMap = Dict{Conditional, Variable}
+function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(all)})
+    for arg in c.args
+        implies!(m, z, arg)
+    end
+end
+
+struct Disjunction{T <: Tuple{Vararg{<:Conditional}}}
+    cases::T
+end
+
+function disjunction!(m::Model, cs::Conditional...)
+    push!(get!(m.ext, :disjunctions, Disjunction[]), Disjunction(cs))
+end
+
+struct IndicatorMap
+    model::Model
+    indicators::Dict{Conditional, Variable}
+    idx::Base.RefValue{Int}
+end
+
+IndicatorMap(m::Model) = IndicatorMap(m, Dict{Conditional, Variable}(), Ref(1))
+
+function getindicator!(m::IndicatorMap, c::Conditional)
+    if haskey(m.indicators, c)
+        return m.indicators[c]
+    elseif haskey(m.indicators, !c)
+        return 1 - m.indicators[!c]
+    else
+        z = @variable(m.model, category=:Bin, basename="z_$(m.idx[])")
+        implies!(m.model, z, c)
+        m.idx[] = m.idx[] + 1
+        compl = !c
+        if !isa(compl, ComplementNotDefined)
+            implies!(m.model, 1 - z, compl)
+        end
+        m.indicators[c] = z
+        return z
+    end
+end
 
 function _setup_indicator!(m::Model, imp::Implication, indicators::IndicatorMap)
-    # println("Adding indicator for: ", imp)
-    if haskey(indicators, imp.lhs)
-        # println("hit for lhs")
-        implies!(m, indicators[imp.lhs], imp.rhs)
-    elseif haskey(indicators, !(imp.lhs))
-        # println("hit for complement of lhs")
-        implies!(m, 1 - indicators[!(imp.lhs)], imp.rhs)
-    else
-        # println("generating new variable for lhs")
-        z = @variable(m, category=:Bin, basename="z")
-        implies!(m, z, imp.lhs)
-        implies!(m, z, imp.rhs)
-        if !isa(!(imp.lhs), ComplementNotDefined)
-            implies!(m, 1 - z, !(imp.lhs))
-        end
-        indicators[imp.lhs] = z
-    end
+    z = getindicator!(indicators, imp.lhs)
+    implies!(m, z, imp.rhs)
+    # # println("Adding indicator for: ", imp)
+    # if haskey(indicators, imp.lhs)
+    #     # println("hit for lhs")
+    #     implies!(m, indicators[imp.lhs], imp.rhs)
+    # elseif haskey(indicators, !(imp.lhs))
+    #     # println("hit for complement of lhs")
+    #     implies!(m, 1 - indicators[!(imp.lhs)], imp.rhs)
+    # else
+    #     # println("generating new variable for lhs")
+    #     z = @variable(m, category=:Bin, basename="z")
+    #     implies!(m, z, imp.lhs)
+    #     implies!(m, z, imp.rhs)
+    #     if !isa(!(imp.lhs), ComplementNotDefined)
+    #         implies!(m, 1 - z, !(imp.lhs))
+    #     end
+    #     indicators[imp.lhs] = z
+    # end
     nothing
 end
 
@@ -241,12 +287,23 @@ function _setup_implication!(m::Model, imp::Implication, indicators::IndicatorMa
     end
 end
 
+function _setup_disjunction!(m::Model, d::Disjunction, indicators::IndicatorMap)
+    if all(isnull, _getvalue.(d.cases))
+        zs = getindicator!.(indicators, d.cases)
+        @constraint(m, sum(zs) == 1)
+    end
+end
+
 function _setup_indicators!(m::Model)
-    indicators = IndicatorMap()
-    for x in get(m.ext, :implications, Implication[])
+    indicators = IndicatorMap(m)
+    for x in get!(m.ext, :implications, Implication[])
         _setup_implication!(m, x, indicators)
     end
     empty!(m.ext[:implications])
+    for x in get!(m.ext, :disjunctions, Disjunction[])
+        _setup_disjunction!(m, x, indicators)
+    end
+    empty!(m.ext[:disjunctions])
 end
 
 function setup_indicators!(m::Model)
