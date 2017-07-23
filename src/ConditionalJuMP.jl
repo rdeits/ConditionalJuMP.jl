@@ -255,23 +255,6 @@ end
 function _setup_indicator!(m::Model, imp::Implication, indicators::IndicatorMap)
     z = getindicator!(indicators, imp.lhs)
     implies!(m, z, imp.rhs)
-    # # println("Adding indicator for: ", imp)
-    # if haskey(indicators, imp.lhs)
-    #     # println("hit for lhs")
-    #     implies!(m, indicators[imp.lhs], imp.rhs)
-    # elseif haskey(indicators, !(imp.lhs))
-    #     # println("hit for complement of lhs")
-    #     implies!(m, 1 - indicators[!(imp.lhs)], imp.rhs)
-    # else
-    #     # println("generating new variable for lhs")
-    #     z = @variable(m, category=:Bin, basename="z")
-    #     implies!(m, z, imp.lhs)
-    #     implies!(m, z, imp.rhs)
-    #     if !isa(!(imp.lhs), ComplementNotDefined)
-    #         implies!(m, 1 - z, !(imp.lhs))
-    #     end
-    #     indicators[imp.lhs] = z
-    # end
     nothing
 end
 
