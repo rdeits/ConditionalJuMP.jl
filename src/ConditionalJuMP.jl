@@ -18,7 +18,8 @@ getmodel(x::JuMP.Variable) = x.m
 getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
 getmodel(x) = nothing
 
-nullnan(x) = isnan(x) ? Nullable{typeof(x)}() : Nullable{typeof(x)}(x)
+nan_to_null(x) = isnan(x) ? Nullable{typeof(x)}() : Nullable{typeof(x)}(x)
+null_to_nan(x::Nullable) = isnull(x) ? NaN : get(x)
 
 """
 Like JuMP.getvalue, but never throws warnings for unset variables
@@ -31,8 +32,11 @@ function _getvalue(x::JuMP.GenericAffExpr{T, Variable}) where {T}
     result
 end
 
-_getvalue(x::Variable) = nullnan(JuMP._getValue(x))
-_getvalue(x::Number) = nullnan(x)
+_getvalue(x::Variable) = nan_to_null(JuMP._getValue(x))
+_getvalue(x::Number) = nan_to_null(x)
+
+_setvalue(v::Variable, x::Nullable) = JuMP.setvalue(v, null_to_nan(x))
+_setvalue(v::Variable, x) = JuMP.setvalue(v, x)
 
 struct Conditional{Op, N, Args<:Tuple{Vararg{<:Any, N}}}
     op::Op
@@ -66,7 +70,6 @@ Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
 canonicalize(op, args) = op, args
 canonicalize(op::typeof(>=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[2] - args[1], 0))
 canonicalize(op::typeof(<=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[1] - args[2], 0))
-canonicalize(op::typeof(==), args::Tuple{Vararg{<:Any, 2}}) = (==, (args[1] - args[2], 0))
 
 (==)(c1::Conditional{op}, c2::Conditional{op}) where {op} = c1.args == c2.args
 
@@ -144,7 +147,7 @@ require!(m::Model, c::Conditional{typeof(<=), 2}) = @constraint(m, c.args[1] <= 
 function require!(m::Model, c::Conditional{typeof(==), 2})
     lhs, rhs = c.args
     constraint = @constraint(m, lhs == rhs)
-    setvalue(lhs, rhs)
+    _setvalue(lhs, rhs)
     constraint
 end
 
@@ -256,16 +259,16 @@ end
 
 function with_assignment!(f::Function, m::Model, assignment::Pair{Variable, <:Number})
     prev = _getvalue(assignment.first)
-    setvalue(assignment.first, assignment.second)
+    _setvalue(assignment.first, assignment.second)
     f()
-    setvalue(assignment.first, prev)
+    _setvalue(assignment.first, prev)
 end
 
 function with_assignment!(f::Function, m::Model, assignment::Pair{<:AbstractArray{Variable}, <:AbstractArray{<:Number}})
     prev = _getvalue.(assignment.first)
-    setvalue.(assignment.first, assignment.second)
+    _setvalue.(assignment.first, assignment.second)
     f()
-    setvalue.(assignment.first, prev)
+    _setvalue.(assignment.first, prev)
 end
 
 function setup_indicators!(m::Model, assignment, assignments...)
