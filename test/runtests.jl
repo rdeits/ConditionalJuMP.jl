@@ -307,6 +307,10 @@ end
 end
 
 @testset "examples" begin
+    @testset "friction with @switch" begin
+        include("../examples/friction.jl")
+    end
+
     @testset "block with wall" begin
         if Pkg.installed("Gurobi") !== nothing
             include("../examples/block_with_wall.jl")
