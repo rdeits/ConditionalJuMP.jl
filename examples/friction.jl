@@ -46,7 +46,6 @@ for i in 2:N
     @constraint(m, xvars[i] .== update(xvars[i - 1]))
 end
 setup_indicators!(m)
-display(m)
 solve(m)
 xvals = getvalue.(xvars)
 
