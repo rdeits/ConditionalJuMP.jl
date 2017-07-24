@@ -171,6 +171,22 @@ function switch!(m::Model, args...)
     y
 end
 
+function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
+    y = reshape(@variable(m, y[1:length(args[1].second)], basename="y"), size(args[1].second))
+    conditions = first.(args)
+    values = second.(args)
+    for I in eachindex(y)
+        setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
+        setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
+    end
+    for (condition, value) in args
+        implies!(m, condition, @?(y == value))
+    end
+    disjunction!(m, conditions...)
+    y
+end
+
+
 function Base.ifelse(c::Conditional, v1, v2)
     @assert size(v1) == size(v2)
     m = getmodel(c)

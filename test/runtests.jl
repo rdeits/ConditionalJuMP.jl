@@ -259,6 +259,51 @@ end
             @test getvalue(y) ≈ 0.3
         end
     end
+
+    @testset "disjunctions with arrays" begin
+        function g(x)
+            @switch(
+                (x <= -0.5) => [0.1, 1.1],
+                ((x >= -0.5) & (x <= 0.5)) => [0.2, 2.2],
+                (x >= 0.5) => [0.3, 3.3]
+            )
+        end 
+
+        @test @inferred(g(-1)) == [0.1, 1.1]
+        @test @inferred(g(0)) == [0.2, 2.2]
+        @test @inferred(g(1)) == [0.3, 3.3]
+
+        @testset "case 1" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = g(x)
+            @constraint(m, x == -1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ -1
+            @test getvalue(y) ≈ [0.1, 1.1]
+        end
+        @testset "case 2" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = g(x)
+            @constraint(m, x == -0)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 0
+            @test getvalue(y) ≈ [0.2, 2.2]
+        end
+        @testset "case 3" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = g(x)
+            @constraint(m, x == 1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 1
+            @test getvalue(y) ≈ [0.3, 3.3]
+        end
+    end
 end
 
 @testset "examples" begin
