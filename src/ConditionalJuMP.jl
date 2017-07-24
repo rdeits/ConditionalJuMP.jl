@@ -9,9 +9,12 @@ import Base: <=, ==, >=, !, &
 export @disjunction,
     @implies,
     @?,
+    @switch,
     setup_indicators!,
     upperbound,
     lowerbound
+
+include("macros.jl")
 
 const JExpr = JuMP.GenericAffExpr{Float64, Variable}
 
@@ -108,16 +111,10 @@ complement(c::Conditional{typeof(<=), 2}) = Conditional(<=, c.args[2], c.args[1]
 complement(c::Conditional{typeof(>=), 2}) = Conditional(<=, c.args[1], c.args[2])
 (!)(c::Conditional) = complement(c)
 
-macro implies(m, lhs, rhs)
-    quote
-        implies!($(esc(m)), 
-            $(_conditionalize_recursive!(lhs)),
-            $(_conditionalize_recursive!(rhs)))
-    end
-end
-
-Base.@pure isjump(args::Tuple) = any(isjump, args)
 Base.@pure isjump(x) = false
+Base.@pure isjump(args::Tuple) = any(isjump, args)
+Base.@pure isjump(arg::Pair) = isjump(arg.first)
+Base.@pure isjump(c::Conditional) = isjump(c.args[1])
 Base.@pure isjump(x::AbstractJuMPScalar) = true
 Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
 
@@ -130,23 +127,6 @@ function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=)
 end
 
 _conditional(op, args...) = op(args...)
-
-_conditionalize_recursive!(x) = esc(x)
-
-function _conditionalize_recursive!(ex::Expr)
-    if ex.head == :call
-        for i in eachindex(ex.args)
-            ex.args[i] = _conditionalize_recursive!(ex.args[i])
-        end
-        Expr(:call, :_conditional, ex.args[1], ex.args[2:end]...)
-    else
-        esc(ex)
-    end
-end
-
-macro ?(ex)
-    _conditionalize_recursive!(ex)
-end
 
 lowerbound(x::Number) = x
 lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
@@ -175,6 +155,37 @@ require!(m::Model, ::ComplementNotDefined) = nothing
 function implies!(m::Model, c1::Conditional, c2::Conditional)
     push!(get!(m.ext, :implications, Implication[]), Implication(c1, c2))
 end
+
+second(x::Pair) = x.second
+
+function switch!(m::Model, args...)
+    y = @variable(m, y, basename="y")
+    conditions = first.(args)
+    values = second.(args)
+    setlowerbound(y, minimum(lowerbound, values))
+    setupperbound(y, maximum(upperbound, values))
+    for (condition, value) in args
+        implies!(m, condition, @?(y == value))
+    end
+    disjunction!(m, conditions...)
+    y
+end
+
+function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
+    y = reshape(@variable(m, y[1:length(args[1].second)], basename="y"), size(args[1].second))
+    conditions = first.(args)
+    values = second.(args)
+    for I in eachindex(y)
+        setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
+        setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
+    end
+    for (condition, value) in args
+        implies!(m, condition, @?(y == value))
+    end
+    disjunction!(m, conditions...)
+    y
+end
+
 
 function Base.ifelse(c::Conditional, v1, v2)
     @assert size(v1) == size(v2)
@@ -345,9 +356,17 @@ function setup_indicators!(m::Model, assignment, assignments...)
     m
 end
 
-macro disjunction(m, args...)
-    Expr(:call, :disjunction!, esc(m),
-        _conditionalize_recursive!.(args)...)
+function switch(args::Pair...)
+    if isjump(args)
+        switch!(getmodel(args[1].first), args...)
+    else
+        for arg in args
+            if arg.first
+                return arg.second
+            end
+        end
+        error("One of the cases in the switch statement must always match")
+    end
 end
 
 end
