@@ -52,3 +52,7 @@ xvals = getvalue.(xvars)
 # Verify that the solution to the mixed-integer program is exactly the same as
 # the simulation
 @test all([xvals[i] ≈ xsim[i] for i in 1:N])
+
+expected = Array{Float64,1}[[0.0, 3.0], [0.15, 2.75], [0.2875, 2.5], [0.4125, 2.25], [0.525, 2.0], [0.625, 1.75], [0.7125, 1.5], [0.7875, 1.25], [0.85, 1.0], [0.9, 0.75], [0.9375, 0.5], [0.9625, 0.25], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0], [0.975, 0.0]]
+@test all([xvals[i] ≈ expected[i] for i in 1:N])
+@test all([xsim[i] ≈ expected[i] for i in 1:N])
