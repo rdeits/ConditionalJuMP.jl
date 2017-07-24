@@ -91,11 +91,7 @@ end
 
 @testset "dynamics" begin
     function update(x)
-        @disjunction if x <= 0
-            1
-        else
-            -1
-        end
+        ifelse(@?(x <= 0), 1, -1)
     end
 
     @testset "mixed integer" begin
@@ -152,14 +148,11 @@ end
         m = Model(solver=CbcSolver())
         @variable m -1 <= x <= 1
         @variable m -1 <= y <= 1
-        c1 = @conditional(x <= -0.5)
-        c2 = ConditionalJuMP.Conditional(
-            all, 
-            @conditional(x <= 0.5), 
-            @conditional(x >= -0.5))
-        c3 = @conditional(x >= 0.5)
-        implies!(m, c2, @conditional(y == -0.5))
-        disjunction!(m, c1, c2, c3)
+        c1 = @?(x <= -0.5)
+        c3 = @?(x >= 0.5)
+        c2 = !c1 & !c3
+        @implies(m, c2, y == -0.5)
+        @disjunction(m, c1, c2, c3)
         @constraint(m, x == 0)
         setup_indicators!(m)
         solve(m)
@@ -171,13 +164,10 @@ end
         m = Model(solver=CbcSolver())
         @variable m -1 <= x <= 1
         @variable m -1 <= y <= 1
-        c1 = @conditional(x <= -0.5)
-        c2 = ConditionalJuMP.Conditional(
-            all, 
-            @conditional(x <= 0.5), 
-            @conditional(x >= -0.5))
-        c3 = @conditional(x >= 0.5)
-        implies!(m, c2, @conditional(y == -0.5))
+        c1 = @?(x <= -0.5)
+        c3 = @?(x >= 0.5)
+        c2 = !c1 & !c3
+        @implies(m, c2, y == -0.5)
         @constraint(m, x == 0)
         @test_throws ConditionalJuMP.UnhandledComplementException setup_indicators!(m)
     end
@@ -187,6 +177,7 @@ end
     @testset "block with wall" begin
         if Pkg.installed("Gurobi") !== nothing
             include("../examples/block_with_wall.jl")
+            run_mpc(State(1.0, -1.0), 10)
         end
     end
 end

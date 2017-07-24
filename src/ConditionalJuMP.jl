@@ -4,13 +4,11 @@ using JuMP
 using JuMP: AbstractJuMPScalar
 using MacroTools: @capture
 using IntervalArithmetic: Interval, mid, radius
-import Base: <=, ==, >=, !
+import Base: <=, ==, >=, !, &
 
 export @disjunction,
     @implies,
-    @conditional,
-    implies!,
-    disjunction!,
+    @?,
     setup_indicators!,
     upperbound,
     lowerbound
@@ -44,14 +42,13 @@ _setvalue(v::Variable, x) = JuMP.setvalue(v, x)
 struct Conditional{Op, N, Args<:Tuple{Vararg{<:Any, N}}}
     op::Op
     args::Args
-
-    function Conditional{Op, N, Args}(op::Op, args::Args) where {Op, N, Args}
-        canonical_op, canonical_args = canonicalize(op, args)
-        new{typeof(canonical_op), N, typeof(canonical_args)}(canonical_op, canonical_args)
-    end
 end
 
-Conditional(op::Op, args::Vararg{<:Any, N}) where {Op, N} = Conditional{Op, N, typeof(args)}(op, args)
+function Conditional(op::Op, args::Vararg{<:Any, N}) where {Op, N}
+    canonical_op, canonical_args = canonicalize(op, args)
+    Conditional{typeof(canonical_op), N, typeof(canonical_args)}(
+        canonical_op, canonical_args)
+end
 
 function getmodel(c::Conditional)
     for arg in c.args
@@ -63,6 +60,7 @@ function getmodel(c::Conditional)
 end
 
 Conditional(::typeof(>=), x, y) = Conditional(<=, -x, -y)
+(&)(c1::Conditional, c2::Conditional) = Conditional(&, c1, c2)
 
 function _getvalue(c::Conditional)
     c.op.(_getvalue.(c.args)...)
@@ -112,26 +110,42 @@ complement(c::Conditional{typeof(>=), 2}) = Conditional(<=, c.args[1], c.args[2]
 
 macro implies(m, lhs, rhs)
     quote
-        c1 = $(_conditional(lhs))
-        c2 = $(_conditional(rhs))
-        @assert !isa(!c1, ComplementNotDefined)
-        implies!($(esc(m)), c1, c2)
+        implies!($(esc(m)), 
+            $(_conditionalize_recursive!(lhs)),
+            $(_conditionalize_recursive!(rhs)))
     end
 end
 
+Base.@pure isjump(args::Tuple) = any(isjump, args)
+Base.@pure isjump(x) = false
+Base.@pure isjump(x::AbstractJuMPScalar) = true
+Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
 
-function _conditional(ex::Expr)
-    if @capture(ex, op_(lhs_, rhs_))
-        quote
-            Conditional($(esc(op)), $(esc(lhs)), $(esc(rhs)))
-        end
+function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==)}}
+    if isjump(args)
+        Conditional(op, args...)
     else
-        error("Could not parse: $ex. Expected `@conditional(x <= y)`")
+        op(args...)
     end
 end
 
-macro conditional(ex)
-    _conditional(ex)
+_conditional(op, args...) = op(args...)
+
+_conditionalize_recursive!(x) = esc(x)
+
+function _conditionalize_recursive!(ex::Expr)
+    if ex.head == :call
+        for i in eachindex(ex.args)
+            ex.args[i] = _conditionalize_recursive!(ex.args[i])
+        end
+        Expr(:call, :_conditional, ex.args[1], ex.args[2:end]...)
+    else
+        esc(ex)
+    end
+end
+
+macro ?(ex)
+    _conditionalize_recursive!(ex)
 end
 
 lowerbound(x::Number) = x
@@ -168,8 +182,8 @@ function Base.ifelse(c::Conditional, v1, v2)
     y = @variable(m, y, basename="y")
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    implies!(m, c, @conditional y == v1)
-    implies!(m, !c, @conditional y == v2)
+    implies!(m, c, @? y == v1)
+    implies!(m, !c, @? y == v2)
     y
 end
 
@@ -179,8 +193,8 @@ function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    implies!(m, c, @conditional y == v1)
-    implies!(m, !c, @conditional y == v2)
+    implies!(m, c, @? y == v1)
+    implies!(m, !c, @? y == v2)
     y
 end
 
@@ -212,7 +226,7 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), 2}
     end
 end 
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(all)})
+function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(&)})
     for arg in c.args
         implies!(m, z, arg)
     end
@@ -331,20 +345,9 @@ function setup_indicators!(m::Model, assignment, assignments...)
     m
 end
 
-macro disjunction(ex)
-    if @capture(ex, if c1_; v1_; else v2_; end)
-        cond_expr = _conditional(c1)
-    else
-        error("Could not parse: $ex")
-    end
-    quote
-        if isa($(cond_expr).args[1] - $(cond_expr).args[2], AbstractJuMPScalar)
-            ifelse($(cond_expr), $(esc(v1)), $(esc(v2)))
-        else
-            $(esc(ex))
-        end
-    end
+macro disjunction(m, args...)
+    Expr(:call, :disjunction!, esc(m),
+        _conditionalize_recursive!.(args)...)
 end
-            
 
 end

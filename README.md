@@ -108,17 +108,18 @@ Stacktrace:
  [1] update(::JuMP.Variable) at ./REPL[3]:2
 ```
 
-But if we decorate the `if` statement with `@disjunction`, then the function will magically just work in both cases:
+But if we replace the `if` statement with `ifelse()` and use the special `@?` macro, then the function will magically just work in both cases:
 
 ```julia
 function update(x)
-    @disjunction if x <= 0
-        1
-    else
+    ifelse(@?(x <= 0),
+        1,
         -1
-    end
+    )
 end
 ```
+
+The `@?` macro is necessary because JuMP does not define `<=` for its `Variable` type, and we don't want to commit type piracy by defining it ourselves. 
 
 ```julia
 julia> update(0.5)
