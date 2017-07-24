@@ -14,11 +14,9 @@ const Δt = 0.1
 const u_max = 10
 
 function update(x::State, u)
-    contact_force = @disjunction if x.q <= 0
-        -k * x.q
-    else
-        zero(x.q)
-    end
+    contact_force = ifelse(@?(x.q <= 0),
+        -k * x.q,
+        zero(x.q))
     acceleration = u + contact_force
     x_next = State(x.q + Δt * x.v + 0.5 * Δt^2 * acceleration,
                    x.v + Δt * acceleration)
@@ -50,4 +48,3 @@ function run_mpc(x0::State, N=10)
     solve(m)
     getvalue.(xs), getvalue.(u)
 end
-
