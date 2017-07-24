@@ -31,15 +31,15 @@ function update(x)
 end
 
 # Simulate forward using the given dynamics to get a trajectory of states
+N = 20
 x0 = [0, 3.0]
-xs = [x0]
-for i in 1:20
-    push!(xs, update(xs[end]))
+xsim = [x0]
+for i in 2:N
+    push!(xsim, update(xsim[end]))
 end
 
 # Now set up a mixed-integer program to solve for all N states simultaneously
 m = Model(solver=CbcSolver())
-N = 20
 xvars = [@variable(m, [1:2], basename="x", lowerbound=-4, upperbound=4) for i in 1:N]
 @constraint(m, xvars[1] .== x0)
 for i in 2:N
@@ -51,4 +51,4 @@ xvals = getvalue.(xvars)
 
 # Verify that the solution to the mixed-integer program is exactly the same as
 # the simulation
-@test all([xvals[i] ≈ xs[i] for i in 1:N])
+@test all([xvals[i] ≈ xsim[i] for i in 1:N])
