@@ -1,4 +1,5 @@
 using ConditionalJuMP
+using ConditionalJuMP: switch!
 using JuMP
 using Cbc
 using Base.Test
@@ -170,6 +171,93 @@ end
         @implies(m, c2, y == -0.5)
         @constraint(m, x == 0)
         @test_throws ConditionalJuMP.UnhandledComplementException setup_indicators!(m)
+    end
+
+    @testset "disjunction with switch" begin
+        @testset "case 1" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            c1 = @?(x <= -0.5)
+            c3 = @?(x >= 0.5)
+            c2 = !c1 & !c3
+            y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
+            @constraint(m, x == -1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ -1
+            @test getvalue(y) ≈ 0.1
+        end
+        @testset "case 2" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            c1 = @?(x <= -0.5)
+            c3 = @?(x >= 0.5)
+            c2 = !c1 & !c3
+            y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
+            @constraint(m, x == -0)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 0
+            @test getvalue(y) ≈ 0.2
+        end
+        @testset "case 3" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            c1 = @?(x <= -0.5)
+            c3 = @?(x >= 0.5)
+            c2 = !c1 & !c3
+            y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
+            @constraint(m, x == 1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 1
+            @test getvalue(y) ≈ 0.3
+        end
+    end
+
+    @testset "disjunction with switch macro" begin
+        function f(x)
+            @switch(
+                (x <= -0.5) => 0.1,
+                ((x >= -0.5) & (x <= 0.5)) => 0.2,
+                (x >= 0.5) => 0.3
+            )
+        end
+
+        @test @inferred(f(-1)) == 0.1
+        @test @inferred(f(0)) == 0.2
+        @test @inferred(f(1)) == 0.3
+
+        @testset "case 1" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = f(x)
+            @constraint(m, x == -1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ -1
+            @test getvalue(y) ≈ 0.1
+        end
+        @testset "case 2" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = f(x)
+            @constraint(m, x == -0)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 0
+            @test getvalue(y) ≈ 0.2
+        end
+        @testset "case 3" begin
+            m = Model(solver=CbcSolver())
+            @variable m -1 <= x <= 1
+            y = f(x)
+            @constraint(m, x == 1)
+            setup_indicators!(m)
+            solve(m)
+            @test getvalue(x) ≈ 1
+            @test getvalue(y) ≈ 0.3
+        end
     end
 end
 
