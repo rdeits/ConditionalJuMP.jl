@@ -25,7 +25,6 @@ getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
 getmodel(x) = nothing
 
 nan_to_null(x) = isnan(x) ? Nullable{typeof(x)}() : Nullable{typeof(x)}(x)
-null_to_nan(x::Nullable) = isnull(x) ? NaN : get(x)
 
 """
 Like JuMP.getvalue, but returns a Nullable{T}() for unset variables instead
@@ -42,7 +41,6 @@ end
 _getvalue(x::Variable) = nan_to_null(JuMP._getValue(x))
 _getvalue(x::Number) = nan_to_null(x)
 
-_setvalue(v::Variable, x::Nullable) = JuMP.setvalue(v, null_to_nan(x))
 _setvalue(v::Variable, x) = JuMP.setvalue(v, x)
 function _setvalue(s::JuMP.GenericAffExpr, x)
     @assert length(s.vars) == 1
@@ -139,24 +137,25 @@ lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
 upperbound(x::Number) = x
 upperbound(x::Variable) = JuMP.getupperbound(x)
 
+function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
+    coeffs = Dict{Variable, T}()
+    for i in eachindex(e.vars)
+        v, c = e.vars[i], e.coeffs[i]
+        coeffs[v] = get(coeffs, v, zero(T)) + c
+    end
+    AffExpr(collect(keys(coeffs)), collect(values(coeffs)), e.constant)
+end
+
 function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
-    intervals = [Interval(getlowerbound(v), getupperbound(v)) for v in e.vars]
+    e2 = simplify(e)
+    intervals = [Interval(getlowerbound(v), getupperbound(v)) for v in e2.vars]
     if isempty(intervals)
-        ex_bounds = Interval(e.constant, e.constant)
+        ex_bounds = Interval(e2.constant, e2.constant)
     else
-        ex_bounds = e.coeffs' * intervals + e.constant
+        ex_bounds = e2.coeffs' * intervals + e2.constant
     end
     mid(ex_bounds) + radius(ex_bounds)
 end
-
-require!(m::Model, c::Conditional{typeof(<=), 2}) = @constraint(m, c.args[1] <= c.args[2])
-function require!(m::Model, c::Conditional{typeof(==), 2})
-    lhs, rhs = c.args
-    constraint = @constraint(m, lhs == rhs)
-    _setvalue(lhs, rhs)
-    constraint
-end
-require!(m::Model, ::ComplementNotDefined) = nothing
 
 struct IndicatorMap
     model::Model

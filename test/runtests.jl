@@ -10,6 +10,8 @@ using Base.Test
     e = 2 * x + 1
     @test upperbound(e) == 7
     @test lowerbound(e) == 3
+    @test upperbound(e - 2x) == 1
+    @test lowerbound(e - 2x) == 1
 end
 
 @testset "implies" begin
