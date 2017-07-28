@@ -19,17 +19,8 @@ macro ?(ex)
     _conditionalize_recursive!(ex)
 end
 
-macro implies(m, lhs, rhs)
-    quote
-        implies!($(esc(m)), 
-            $(_conditionalize_recursive!(lhs)),
-            $(_conditionalize_recursive!(rhs)))
-    end
-end
-
-macro disjunction(m, args...)
-    Expr(:call, :disjunction!, esc(m),
-        _conditionalize_recursive!.(args)...)
+macro implies(m, args...)
+    Expr(:call, :implies!, esc(m), _conditionalize_recursive!.(args)...)
 end
 
 macro switch(args...)
