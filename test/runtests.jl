@@ -17,10 +17,9 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y <= 5
-        @implies m x <= 0 y == 3
-        @implies m x >= 0 y == 1
+        @implies m x ≤ 0 => y == 3
+        @implies m x ≥ 0 => y == 1
         @objective m Min x
-        setup_indicators!(m)
 
         # test that the two implications are being represented
         # by a single binary variable
@@ -34,10 +33,9 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y <= 5
-        @implies m x <= 0 y == 3
-        @implies m x >= 0 y == 1
+        @implies m x ≤ 0 => y == 3
+        @implies m x ≥ 0 => y == 1
         @objective m Max x
-        setup_indicators!(m)
 
         # test that the two implications are being represented
         # by a single binary variable
@@ -51,10 +49,9 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y <= 5
-        @implies m x <= -1 y == 3
-        @implies m x >= 1 y == 1
+        @implies m x ≤ -1 => y == 3
+        @implies m x ≥ 1 => y == 1
         @objective m Max x
-        setup_indicators!(m)
         @test sum(m.colCat .== :Bin) == 2
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
@@ -67,9 +64,8 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y[1:2] <= 5
-        @implies m x <= 0 y == [3, 3.5]
+        @implies m x ≤ 0 => y == [3, 3.5]
         @objective m Min x
-        setup_indicators!(m)
         @test sum(m.colCat .== :Bin) == 1
         solve(m)
         @test getvalue(x) ≈ lowerbound(x)
@@ -80,9 +76,8 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y[1:2] <= 5
-        @implies m x >= 0 y == [1, -1]
+        @implies m x ≥ 0 => y == [1, -1]
         @objective m Max x
-        setup_indicators!(m)
         @test sum(m.colCat .== :Bin) == 1
         solve(m)
         @test getvalue(x) ≈ upperbound(x)
@@ -105,7 +100,6 @@ end
         end
 
         @objective m Max sum(ys)
-        setup_indicators!(m)
         @test sum(m.colCat .== :Bin) == 3
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
@@ -121,7 +115,8 @@ end
         end
 
         @objective m Max sum(ys)
-        setup_indicators!(m, x=>0.5)
+        setvalue(x, 0.5)
+        setup_indicators!(m, true)
         @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0.5, -1, 1, -1]
@@ -137,11 +132,55 @@ end
         end
 
         @objective m Max sum(ys)
-        setup_indicators!(m, x=>-0.5)
+        setvalue(x, -0.5)
+        setup_indicators!(m, true)
         @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
     end
+end
+
+function model_latex(m::Model)
+    io = IOBuffer()
+    show(io, MIME"text/latex"(), m)
+    seekstart(io)
+    readstring(io)
+end
+
+@testset "fixing and unfixing" begin
+    m = Model(solver=CbcSolver())
+    @variable m -1 <= x <= 1
+    @variable m -1 <= y <= 1
+    @implies m x ≤ 0 => y == 0.5
+    setvalue(x, 0.5)
+    @objective(m, Min, x + 0.1y)
+    out1 = model_latex(m)
+
+    # Use the value of x as a hint
+    setup_indicators!(m)
+    @test sum(m.colCat .== :Bin) == 1
+    @test model_latex(m) == out1
+    solve(m)
+    @test getvalue(x) ≈ -1
+    @test getvalue(y) ≈ 0.5
+
+    # Now use the current value of x to fix the indicators
+    setvalue(x, 0.5)
+    setup_indicators!(m, true)
+    @test sum(m.colCat .== :Bin) == 0
+    solve(m)
+    @test getvalue(x) ≈ 0
+    @test getvalue(y) ≈ -1
+
+    # Now un-fix the indicators and make sure we get the original
+    # model back
+    setvalue(x, 0.5)
+    setup_indicators!(m)
+    @test sum(m.colCat .== :Bin) == 1
+    @test model_latex(m) == out1
+    solve(m)
+    @test getvalue(x) ≈ -1
+    @test getvalue(y) ≈ 0.5
 end
 
 @testset "disjunctions" begin
@@ -152,13 +191,30 @@ end
         c1 = @?(x <= -0.5)
         c3 = @?(x >= 0.5)
         c2 = !c1 & !c3
-        @implies(m, c2, y == -0.5)
-        @disjunction(m, c1, c2, c3)
+        @implies(m, 
+            c1 => nothing,
+            c2 => y == -0.5,
+            c3 => nothing)
         @constraint(m, x == 0)
         setup_indicators!(m)
         solve(m)
         @test getvalue(x) ≈ 0
         @test getvalue(y) ≈ -0.5
+    end
+
+    @testset "two-way disjunction" begin
+        m = Model(solver=CbcSolver())
+        @variable m -1 <= x <= 1
+        @variable m -1 <= y <= 1
+        c1 = @?(x <= -0.5)
+        c2 = @?(x >= 0.5)
+        @implies(m,
+            c1 => y == 0.1,
+            c2 => nothing
+            )
+        # Test that the two-way disjunction is represented with just one
+        # binary variable
+        @test sum(m.colCat .== :Bin) == 1
     end
 
     @testset "missing disjunction" begin
@@ -168,9 +224,10 @@ end
         c1 = @?(x <= -0.5)
         c3 = @?(x >= 0.5)
         c2 = !c1 & !c3
-        @implies(m, c2, y == -0.5)
-        @constraint(m, x == 0)
-        @test_throws ConditionalJuMP.UnhandledComplementException setup_indicators!(m)
+        @test_throws(
+            ConditionalJuMP.UnhandledComplementException,
+            @implies(m, c2 => y == -0.5)
+            )
     end
 
     @testset "disjunction with switch" begin
