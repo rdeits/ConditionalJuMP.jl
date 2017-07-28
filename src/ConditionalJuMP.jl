@@ -5,7 +5,7 @@ module ConditionalJuMP
 using JuMP
 using JuMP: AbstractJuMPScalar
 using MacroTools: @capture
-using IntervalArithmetic: Interval, mid, radius
+using IntervalArithmetic: Interval
 import Base: <=, ==, >=, !, &
 
 export @disjunction,
@@ -154,7 +154,7 @@ function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
     else
         ex_bounds = e2.coeffs' * intervals + e2.constant
     end
-    mid(ex_bounds) + radius(ex_bounds)
+    ex_bounds.hi
 end
 
 struct IndicatorMap
