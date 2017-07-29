@@ -44,7 +44,7 @@ function run_mpc(x0::State, N=10)
     end
     x_f = xs[end]
     @objective(m, Min, 10 * ((x_f.q - 1.0)^2 + x_f.v^2) + 0.01 * sum(u.^2))
-    setup_indicators!(m)
+    warmstart!(m)
     solve(m)
     getvalue.(xs), getvalue.(u)
 end

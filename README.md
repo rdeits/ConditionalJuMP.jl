@@ -15,13 +15,30 @@ m = Model(solver=CbcSolver())
 @variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
 @variable(m, -1 <= y <= 1)
 # Require that y == 0.5 whenever x <= 0
-@implies(m, x <= 0, y == 0.5)
+@implies(m, (x <= 0) => (y == 0.5))
 @objective(m, Min, 4x + y)
+solve(m)
+@assert getvalue(x) ≈ -1
+@assert getvalue(y) ≈ 0.5
+```
 
-# setup_indicators!() actually adds the appropriate binary variables to the
-# model:
-setup_indicators!(m)
+## Warm-starting the solver
 
+Mixed-integer models can perform much better when given a feasible initial solution. If you've assigned initial values to your variables using JuMP's `setvalue()` function, then `ConditionalJuMP` can use those values to also add starting values for the binary indicator variables. The `warmstart()` function does this for you:
+
+```julia
+using JuMP, Cbc, ConditionalJuMP
+
+m = Model(solver=CbcSolver())
+@variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
+@variable(m, -1 <= y <= 1)
+# Require that y == 0.5 whenever x <= 0
+@implies(m, (x <= 0) => (y == 0.5))
+@objective(m, Min, 4x + y)
+# Guess a solution with x == -0.5, y == 1
+setvalue(x, -0.5)
+setvalue(y, 1)
+warmstart!(m)
 solve(m)
 @assert getvalue(x) ≈ -1
 @assert getvalue(y) ≈ 0.5
@@ -29,21 +46,22 @@ solve(m)
 
 ## Fixing the binary values
 
-It can sometimes be useful to write a model with implication constraints, but then choose to solve that model with the implications fixed. For example, we might wish to try solving the above model both for the case that x <= 0 and for the case that x >= 0. To do that, we can pass variable assignments to `setup_indicators()`, which will use those assignments to determine exactly which sets of constraints should be applied. More concretely:
+It can sometimes be useful to write a model with implication constraints, but then choose to solve that model with the implications fixed. For example, we might wish to try solving the above model both for the case that x <= 0 and for the case that x >= 0. To do that, we just call `warmstart!(model, true)`, which will use the values previously set with `setvalue()` to determine exactly which sets of constraints should be applied. More concretely:
 
 ```julia
 m = Model(solver=CbcSolver())
 @variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
 @variable(m, -1 <= y <= 1)
 # Require that y == 0.5 whenever x <= 0
-@implies(m, x <= 0, y == 0.5)
+@implies(m, (x <= 0) => (y == 0.5))
 @objective(m, Min, 4x + y)
 
 # Set up the indicator variables for the case that x == 1. Note that this does *not*
 # fix x to 1 in the optimization. It simply requires that any implications which depend
 # on x will be fixed to the set containing x == 1. In this case, that means that x will
 # be fixed to be greater than or equal to 0. 
-setup_indicators!(m, x => 1)
+setvalue(x, 1)
+warmstart!(m, true)
 solve(m)
 
 @assert getvalue(x) ≈ 0
@@ -55,7 +73,7 @@ m = Model(solver=CbcSolver())
 @variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
 @variable(m, -1 <= y <= 1)
 # Require that y == 0.5 whenever x <= 0
-@implies(m, x <= 0, y == 0.5)
+@implies(m, (x <= 0) => (y == 0.5))
 @objective(m, Min, 4x + y)
 
 # Set up the indicator variables for the case that x == -1. Note that this does *not*
@@ -63,7 +81,8 @@ m = Model(solver=CbcSolver())
 # on x will be fixed to the set containing x == -1. In this case, that means that x will
 # be fixed to be less than or equal to 0 AND (by the implication above) y will be fixed 
 # to be equal to 0.5
-setup_indicators!(m, x => -1)
+setvalue(x, -1)
+warmstart!(m, true)
 solve(m)
 
 @assert getvalue(x) ≈ -1
@@ -72,7 +91,7 @@ solve(m)
 
 ## Disjunctions
 
-This package also provides the `@disjunction` macro, which can operate on simple `if` statements to create functions which can be run both on numbers and on optimization variables. For example, let's write a simple update function:
+This package also provides the `@ifelse` macro to create simple `if` statements which work both on numbers and on optimization variables. For example, let's write a simple update function:
 
 ```julia
 function update(x)
@@ -108,14 +127,14 @@ Stacktrace:
  [1] update(::JuMP.Variable) at ./REPL[3]:2
 ```
 
-But if we replace the `if` statement with `ifelse()` and use the special `@?` macro, then the function will magically just work in both cases:
+But if we replace the `if` statement with `@ifelse`, then the function will magically just work in both cases:
 
 ```julia
 function update(x)
-    ifelse(@?(x <= 0),
-        1,
-        -1
-    )
+    @ifelse(x <= 0, 
+      1,
+      -1
+      )
 end
 ```
 
@@ -127,7 +146,7 @@ julia> update(0.5)
 
 julia> m = Model();
 
-julia> @variable m x;
+julia> @variable m -5 <= x <= 5;
 
 julia> y = update(x)
 y
@@ -145,11 +164,6 @@ for i in 1:3
 end
 
 @objective m Max sum(ys)
-
-# setup_indicators!() uses the data recorded by the `@disjunction` macro to set
-# up the necessary binary variables to enforce the `if` statement.
-setup_indicators!(m)
-
 solve(m)
 @assert getvalue.(ys) ≈ [0, 1, -1, 1]
 ```
@@ -177,12 +191,8 @@ m = Model(solver=CbcSolver())
 @variable(m, -1 <= x <= 1)  # having bounds on all variables is currently a requirement
 @variable(m, -1 <= y <= 1)
 # Require that y == 0.5 whenever x <= 0
-@implies(m, x <= 0, y == 0.5)
+@implies(m, (x <= 0) => (y == 0.5))
 @objective(m, Min, 4x + y)
-
-# setup_indicators!() actually adds the appropriate binary variables to the
-# model:
-setup_indicators!(m)
 ```
 
 The constraints which are generated for the indicator variable `z` are:

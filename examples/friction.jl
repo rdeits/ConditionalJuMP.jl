@@ -45,7 +45,7 @@ xvars = [@variable(m, [1:2], basename="x", lowerbound=-4, upperbound=4) for i in
 for i in 2:N
     @constraint(m, xvars[i] .== update(xvars[i - 1]))
 end
-setup_indicators!(m)
+warmstart!(m)
 solve(m)
 xvals = getvalue.(xvars)
 
