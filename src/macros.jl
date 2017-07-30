@@ -26,3 +26,7 @@ end
 macro switch(args...)
     Expr(:call, :switch, _conditionalize_recursive!.(args)...)
 end
+
+macro ifelse(c, v1, v2)
+    Expr(:call, :ifelse, _conditionalize_recursive!(c), v1, v2)
+end

@@ -12,7 +12,8 @@ export @disjunction,
     @implies,
     @?,
     @switch,
-    setup_indicators!,
+    @ifelse,
+    warmstart!,
     upperbound,
     lowerbound
 
@@ -356,7 +357,7 @@ end
 
 _setvalue(m::Model, c::Conditional) = nothing
 
-function setup_indicators!(m::Model, fix=false)
+function warmstart!(m::Model, fix=false)
     indmap = getindmap!(m)
     while true
         modified = false

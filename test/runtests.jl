@@ -89,7 +89,7 @@ end
 
 @testset "dynamics" begin
     function update(x)
-        ifelse(@?(x <= 0), 1, -1)
+        @ifelse(x <= 0, 1, -1)
     end
 
     @testset "mixed integer" begin
@@ -118,7 +118,7 @@ end
 
         @objective m Max sum(ys)
         setvalue(x, 0.5)
-        setup_indicators!(m, true)
+        warmstart!(m, true)
         @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0.5, -1, 1, -1]
@@ -135,7 +135,7 @@ end
 
         @objective m Max sum(ys)
         setvalue(x, -0.5)
-        setup_indicators!(m, true)
+        warmstart!(m, true)
         @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
@@ -159,7 +159,7 @@ end
     out1 = model_latex(m)
 
     # Use the value of x as a hint
-    setup_indicators!(m)
+    warmstart!(m)
     @test sum(m.colCat .== :Bin) == 1
     @test model_latex(m) == out1
     solve(m)
@@ -168,7 +168,7 @@ end
 
     # Now use the current value of x to fix the indicators
     setvalue(x, 0.5)
-    setup_indicators!(m, true)
+    warmstart!(m, true)
     @test sum(m.colCat .== :Bin) == 0
     solve(m)
     @test getvalue(x) ≈ 0
@@ -177,7 +177,7 @@ end
     # Now un-fix the indicators and make sure we get the original
     # model back
     setvalue(x, 0.5)
-    setup_indicators!(m)
+    warmstart!(m)
     @test sum(m.colCat .== :Bin) == 1
     @test model_latex(m) == out1
     solve(m)
@@ -198,7 +198,7 @@ end
             c2 => y == -0.5,
             c3 => nothing)
         @constraint(m, x == 0)
-        setup_indicators!(m)
+        warmstart!(m)
         solve(m)
         @test getvalue(x) ≈ 0
         @test getvalue(y) ≈ -0.5
@@ -241,7 +241,7 @@ end
             c2 = !c1 & !c3
             y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
             @constraint(m, x == -1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ -1
             @test getvalue(y) ≈ 0.1
@@ -254,7 +254,7 @@ end
             c2 = !c1 & !c3
             y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
             @constraint(m, x == -0)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 0
             @test getvalue(y) ≈ 0.2
@@ -267,7 +267,7 @@ end
             c2 = !c1 & !c3
             y = switch!(m, c1=>0.1, c2=>0.2, c3=>0.3)
             @constraint(m, x == 1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 1
             @test getvalue(y) ≈ 0.3
@@ -292,7 +292,7 @@ end
             @variable m -1 <= x <= 1
             y = f(x)
             @constraint(m, x == -1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ -1
             @test getvalue(y) ≈ 0.1
@@ -302,7 +302,7 @@ end
             @variable m -1 <= x <= 1
             y = f(x)
             @constraint(m, x == -0)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 0
             @test getvalue(y) ≈ 0.2
@@ -312,7 +312,7 @@ end
             @variable m -1 <= x <= 1
             y = f(x)
             @constraint(m, x == 1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 1
             @test getvalue(y) ≈ 0.3
@@ -337,7 +337,7 @@ end
             @variable m -1 <= x <= 1
             y = g(x)
             @constraint(m, x == -1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ -1
             @test getvalue(y) ≈ [0.1, 1.1]
@@ -347,7 +347,7 @@ end
             @variable m -1 <= x <= 1
             y = g(x)
             @constraint(m, x == -0)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 0
             @test getvalue(y) ≈ [0.2, 2.2]
@@ -357,7 +357,7 @@ end
             @variable m -1 <= x <= 1
             y = g(x)
             @constraint(m, x == 1)
-            setup_indicators!(m)
+            warmstart!(m)
             solve(m)
             @test getvalue(x) ≈ 1
             @test getvalue(y) ≈ [0.3, 3.3]
