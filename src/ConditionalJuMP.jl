@@ -73,7 +73,7 @@ Conditional(::typeof(>=), x, y) = Conditional(<=, -x, -y)
 
 _getvalue(c::Conditional{typeof(<=), 2}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
 _getvalue(c::Conditional{typeof(>=), 2}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
-_getvalue(c::Conditional{typeof(==), 2}) = abs(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
+_getvalue(c::Conditional{typeof(==), 2}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
 _getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
 
 Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
@@ -237,6 +237,10 @@ function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     _addimplication!.(indmap, zs, imps)
     @constraint(indmap.model, sum(zs) == 1)
     push!(indmap.disjunctions, Implication[imps...])
+end
+
+function  disjunction!(indmap::IndicatorMap, conditions::Conditional...)
+    disjunction!(indmap, (c -> (c => nothing)).(conditions))
 end
 
 disjunction!(m::Model, args...) = disjunction!(getindmap!(m), args...)

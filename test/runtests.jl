@@ -365,6 +365,49 @@ end
     end
 end
 
+@testset "disjunctions" begin
+    @testset "simple 1-D example" begin
+        m = Model(solver=CbcSolver())
+        @variable(m, -5 <= x <= 5)
+        @disjunction(m, ((x >= -2) & (x <= -1)), ((x >= 1.5) & (x <= 2)))
+        # `s` behaves like a poor-man's quadratic objective
+        @variable(m, s)
+        @constraints m begin
+            s >= x
+            s >= -x
+            s >= 2x - 1
+            s >= -2x - 1
+        end
+        @objective(m, Min, s)
+        solve(m)
+        @test getvalue(x) ≈ -1
+
+        setvalue(x, 2)
+        warmstart!(m, true)
+        solve(m)
+        @test getvalue(x) ≈ 1.5
+    end
+
+    @testset "complementarity" begin
+        m = Model(solver=CbcSolver())
+        @variable(m, -1 <= x <= 1)
+        @variable(m, -1 <= y <= 1)
+        @disjunction(m, x == 0, y == 0)
+        @objective(m, Min, x + 2y)
+        solve(m)
+        @test getvalue(x) ≈ 0
+        @test getvalue(y) ≈ -1
+
+        # Check that we can warmstart even when neither case is precisely satisfied
+        setvalue(y, 0.01)
+        setvalue(x, -0.5)
+        warmstart!(m, true)
+        solve(m)
+        @test getvalue(x) ≈ -1
+        @test getvalue(y) ≈ 0
+    end
+end
+
 @testset "examples" begin
     @testset "friction with @switch" begin
         include("../examples/friction.jl")

@@ -23,6 +23,10 @@ macro implies(m, args...)
     Expr(:call, :implies!, esc(m), _conditionalize_recursive!.(args)...)
 end
 
+macro disjunction(m, args...)
+    Expr(:call, :disjunction!, esc(m), _conditionalize_recursive!.(args)...)
+end
+
 macro switch(args...)
     Expr(:call, :switch, _conditionalize_recursive!.(args)...)
 end
