@@ -170,6 +170,48 @@ solve(m)
 
 The optimal solution is `[0, 1, -1, 1]` because our objective is to maximize the sum of the variables in `ys`. If x were `>=` 0, then our update rule would require the solution to look like `[x, -1, 1, -1]`, which, due to the limits on `0.5 <= x <= 0.5` would have a sub-optimal objective value. So the indicator constraints have indeed given us the optimal solution. 
 
+## More Complicated Disjunctions
+
+If your conditional statement can't be expressed as something in the form `if x then y else z`, then you can use the `@switch` macro to explicitly state each case:
+
+```julia
+y = @switch(
+    (x <= 0) => 5,
+    ((x >= 0) & (x <= 1)) => 6,
+    (x >= 1) => 7
+)
+```
+
+Note that by using `@switch`, you are *promising* that the set of cases you are providing completely cover the feasible set. That is, if you write:
+
+```julia
+y = @switch(
+    (x <= -1) => 5,
+    (x >= 1) => 6
+)
+```
+
+then `x` must either be <= -1 or >= 1. 
+
+## Complementarity and Disjunctions
+
+A final type of conditional you might want to express is a disjunction, which simply says "exactly one of these conditions holds". The `@disjunction` macro handles this case:
+
+```julia
+m = Model()
+@variable m -1 <= x <= 1
+@disjunction(m, (x <= -1), (x >= 1)) 
+```
+
+This can also be used to create complementarity constraints, which require that the product of two expressions be equal to zero. If we want to require that y * x == 0, we can instead require that y == 0 or x == 0:
+
+```julia
+m = Model()
+@variable m -1 <= x <= 1
+@variable m -1 <= y <= 1
+@disjunction(m, x == 0, y == 0)
+```
+
 # Implementation Notes
 
 Indicator constraints are currently enforced using a Big-M formulation. This formulation works by transforming the constraint: `z == 1 implies x <= 0` into the constraint:
