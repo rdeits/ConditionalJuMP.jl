@@ -12,6 +12,8 @@ using Base.Test
     @test lowerbound(e) == 3
     @test upperbound(e - 2x) == 1
     @test lowerbound(e - 2x) == 1
+    @test lowerbound(AffExpr(2)) == 2
+    @test upperbound(AffExpr(2)) == 2
 end
 
 @testset "implies" begin
@@ -139,6 +141,21 @@ end
         @test sum(m.colCat .== :Bin) == 0
         solve(m)
         @test getvalue.(ys) ≈ [0, 1, -1, 1]
+    end
+
+    @testset "vector" begin
+        function update2(x)
+            @ifelse(x[1] <= 0,
+                [1, 2],
+                [3, 4])
+        end
+
+        m = Model(solver=CbcSolver())
+        @variable(m, -10 <= x[1] <= 10)
+        y = update2(x)
+        @constraint(m, x[1] == -5)
+        solve(m)
+        @test getvalue(y) ≈ [1, 2]
     end
 end
 
