@@ -228,11 +228,6 @@ function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
 end
 
 function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
-    if length(imps) == 1
-        return disjunction!(indmap, (imps[1],))
-    elseif length(imps) == 2
-        return disjunction!(indmap, (imps[1], imps[2]))
-    end
     zs = getindicator!.(indmap, first.(imps))
     _addimplication!.(indmap, zs, imps)
     @constraint(indmap.model, sum(zs) == 1)
@@ -290,7 +285,7 @@ function switch!(m::Model, args::Pair{<:Conditional}...)
     values = second.(args)
     setlowerbound(y, minimum(lowerbound, values))
     setupperbound(y, maximum(upperbound, values))
-    disjunction!(m, [c => @?(y == v) for (c, v) in args])
+    disjunction!(m, map(cv -> (cv[1] => @?(y == cv[2])), args))
     y
 end
 
@@ -302,7 +297,7 @@ function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
         setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
         setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
     end
-    disjunction!(m, [c => @?(y == v) for (c, v) in args])
+    disjunction!(m, map(cv -> (cv[1] => @?(y == cv[2])), args))
     y
 end
 
