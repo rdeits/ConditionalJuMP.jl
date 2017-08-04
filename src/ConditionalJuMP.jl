@@ -71,9 +71,10 @@ end
 Conditional(::typeof(>=), x, y) = Conditional(<=, -x, -y)
 (&)(c1::Conditional, c2::Conditional) = Conditional(&, c1, c2)
 
-function _getvalue(c::Conditional)
-    c.op.(_getvalue.(c.args)...)
-end
+_getvalue(c::Conditional{typeof(<=), 2}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
+_getvalue(c::Conditional{typeof(>=), 2}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
+_getvalue(c::Conditional{typeof(==), 2}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
+_getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
 
 Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
 
@@ -161,13 +162,13 @@ end
 struct IndicatorMap
     model::Model
     indicators::Dict{Conditional, AbstractJuMPScalar}
-    implications::Dict{Conditional, Vector{Conditional}}
+    disjunctions::Vector{Vector{Implication}}
     idx::Base.RefValue{Int}
 end
 
 IndicatorMap(m::Model) = IndicatorMap(m, 
     Dict{Conditional, Variable}(), 
-    Dict{Conditional, Vector{Conditional}}(),
+    Vector{Vector{Implication}}(),
     Ref(1))
 
 struct UnhandledComplementException <: Exception
@@ -181,8 +182,6 @@ end
 function getindicator!(m::IndicatorMap, c::Conditional)
     if haskey(m.indicators, c)
         return m.indicators[c]
-    # elseif haskey(m.indicators, !c)
-    #     return 1 - m.indicators[!c]
     else
         z = @variable(m.model, category=:Bin, basename="z_$(m.idx[])")
         implies!(m.model, z, c)
@@ -202,52 +201,51 @@ getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMa
 
 getindicator!(m::Model, c::Conditional) = getindicator!(getindmap!(m), c)
 
-function addimplication!(indmap::IndicatorMap, imp::Implication, addcomplement=true)
+function _addimplication!(indmap::IndicatorMap, z::AbstractJuMPScalar, imp::Implication)
     c1, c2 = imp
-    z = getindicator!(indmap, c1)
-    if c2 !== nothing
-        push!(get!(indmap.implications, c1, Conditional[]), c2)
-    end
     implies!(indmap.model, z, c1)
     implies!(indmap.model, z, c2)
-    if addcomplement
-        implies!(indmap.model, 1 - z, !c1)
-    end
-    z
 end
 
-function addimplication!(indmap::IndicatorMap, imp::Implication...)
-    zs = addimplication!.(indmap, imp, false)
-    @constraint(indmap.model, sum(zs) == 1)
-end
-
-function addimplication!(indmap::IndicatorMap, imp::AbstractArray)
-    zs = addimplication!.(indmap, imp, false)
-    @constraint(indmap.model, sum(zs) == 1)
-end
-
-function implies!(m::Model, imp::Implication)
+function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
+    imp = imps[1]
     c1, c2 = imp
-    if isa(!c1, ComplementNotDefined)
+    comp1 = !c1
+    if isa(comp1, ComplementNotDefined)
         throw(UnhandledComplementException(c1))
     end
-    addimplication!(m, imp)
+    z = getindicator!(indmap, c1)
+    _addimplication!(indmap, z, imp)
+    implies!(indmap.model, 1 - z, comp1)
+    push!(indmap.disjunctions, Implication[imp, comp1=>nothing])
 end
 
-function implies!(m::Model, i1::Implication, i2::Implication)
-    indmap = getindmap!(m)
-    z = addimplication!(indmap, i1)
-    indmap.indicators[first(i2)] = 1 - z
-    addimplication!(indmap, i2)
+function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
+    z = getindicator!(indmap, first(imps[1]))
+    zs = [z, 1 - z]
+    _addimplication!.(indmap, zs, imps)
+    push!(indmap.disjunctions, Implication[imps...])
 end
 
-function implies!(m::Model, imps::Implication...)
-    indmap = getindmap!(m)
-    zs = addimplication!(indmap, imps...)
+function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
+    if length(imps) == 1
+        return disjunction!(indmap, (imps[1],))
+    elseif length(imps) == 2
+        return disjunction!(indmap, (imps[1], imps[2]))
+    end
+    zs = getindicator!.(indmap, first.(imps))
+    _addimplication!.(indmap, zs, imps)
+    @constraint(indmap.model, sum(zs) == 1)
+    push!(indmap.disjunctions, Implication[imps...])
 end
 
+function  disjunction!(indmap::IndicatorMap, conditions::Conditional...)
+    disjunction!(indmap, (c -> (c => nothing)).(conditions))
+end
 
-addimplication!(m::Model, args...) = addimplication!(getindmap!(m), args...)
+disjunction!(m::Model, args...) = disjunction!(getindmap!(m), args...)
+
+implies!(m::Model, imp::Implication...) = disjunction!(m, imp)
 
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), 2})
     lhs, rhs = c.args
@@ -292,7 +290,7 @@ function switch!(m::Model, args::Pair{<:Conditional}...)
     values = second.(args)
     setlowerbound(y, minimum(lowerbound, values))
     setupperbound(y, maximum(upperbound, values))
-    addimplication!(m, [c => @?(y == v) for (c, v) in args])
+    disjunction!(m, [c => @?(y == v) for (c, v) in args])
     y
 end
 
@@ -304,7 +302,7 @@ function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
         setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
         setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
     end
-    addimplication!(m, [c => @?(y == v) for (c, v) in args])
+    disjunction!(m, [c => @?(y == v) for (c, v) in args])
     y
 end
 
@@ -315,7 +313,7 @@ function Base.ifelse(c::Conditional, v1, v2)
     y = @variable(m, y, basename="y")
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    addimplication!(m, c => @?(y == v1), !c => @?(y == v2))
+    disjunction!(m, (c => @?(y == v1), !c => @?(y == v2)))
     y
 end
 
@@ -325,7 +323,7 @@ function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    addimplication!(m, c => @?(y == v1), !c => @?(y == v2))
+    disjunction!(m, (c => @?(y == v1), !c => @?(y == v2)))
     y
 end
 
@@ -355,31 +353,37 @@ function _setvalue(m::Model, c::Conditional{typeof(==), 2})
     nothing
 end
 
+# Fallback methods for most conditionals
 _setvalue(m::Model, c::Conditional) = nothing
+_setvalue(m::Model, ::Void) = nothing
 
 function warmstart!(m::Model, fix=false)
     indmap = getindmap!(m)
     while true
         modified = false
-        for (condition, z) in indmap.indicators
-            satisfied = _getvalue(condition)
-            # @show condition satisfied
-            if !isnull(satisfied)
-                if fix
-                    if !isfixed(z)
-                        modified = true
+        for implications in indmap.disjunctions
+            violations = _getvalue.(first.(implications))
+            if !any(isnull, violations)
+                best_match = indmin(get.(violations))
+                for i in eachindex(violations)
+                    imp = implications[i]
+                    lhs, rhs = imp
+                    z = getindicator!(indmap, lhs)
+                    satisfied = i == best_match
+                    if fix
+                        if !isfixed(z)
+                            modified = true
+                        end
+                        _fix(z, satisfied)
+                    else
+                        if isnull(_getvalue(z))
+                            modified = true
+                        end
+                        _unfix(z)
+                        _setvalue(z, satisfied)
                     end
-                    _fix(z, get(satisfied))
-                else
-                    if isnull(_getvalue(z))
-                        modified = true
-                    end
-                    _unfix(z)
-                    _setvalue(z, get(satisfied))
-                end
-                if get(satisfied)
-                    for c in get(indmap.implications, condition, [])
-                        _setvalue(m, c)
+                    if satisfied
+                        _setvalue(m, rhs)
                     end
                 end
             end
