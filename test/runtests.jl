@@ -436,4 +436,8 @@ end
             run_mpc(State(1.0, -1.0), 10)
         end
     end
+
+    @testset "complementarity" begin
+        include("../examples/complementarity.jl")
+    end
 end
