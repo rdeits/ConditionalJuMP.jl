@@ -6,6 +6,9 @@ using Base.Test
 # Rigid Body Dynamics with Coulomb Friction". This particular example solves
 # for all N timesteps simultaneously. That's not actually necessary, but it makes
 # the code a bit simpler to read. 
+#
+# The model consists of a point mass (visualized as a brick) moving in two dimensions
+# with gravity and a single planar surface at y = 0. 
 
 N = 30
 h = 0.05
