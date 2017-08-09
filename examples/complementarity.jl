@@ -10,57 +10,108 @@ using Base.Test
 # The model consists of a point mass (visualized as a brick) moving in two dimensions
 # with gravity and a single planar surface at y = 0. 
 
-N = 30
-h = 0.05
-μ = 0.5
-n = [0, 1]
-mass = 1.0
-g = [0, -9.81]
-D = [
+const h = 0.05
+const μ = 0.5
+const n = [0, 1]
+const mass = 1.0
+const g = [0, -9.81]
+const D = [
     1 -1
     1  1
 ]
-k = size(D, 2)
-e = ones(k)
+const k = size(D, 2)
+const e = ones(k)
 
-m = Model(solver=CbcSolver())
-
-# Initialize all the variables
-@variables m begin
-    -10 <= q[1:2, 1:N] <= 10
-    -10 <= v[1:2, 1:N] <= 10
-    0 <= β[1:k, 1:N] <= 100
-    0 <= λ[1:N] <= 100
-    0 <= c_n[1:N] <= 100
+struct LCPUpdate{T}
+    q::Vector{T}
+    v::Vector{T}
+    β::Vector{T}
+    λ::T
+    c_n::T
 end
 
-# Set up dynamics and complementarity constraints
-for i in 1:(N-1)
-    @constraints m begin
-        mass * (v[:, i+1] - v[:, i]) .== h * n * c_n[i] .+ h * D * β[:, i] .+ h * mass * g # (5)
-        q[:, i + 1] - q[:, i] .== h .* v[:, i + 1] # (6)
-        n' * q[:, i + 1] >= 0 # (7)
-        λ[i] * e + D' * v[:, i + 1] .>= 0 # (8)
-        μ * c_n[i] - e' * β[:, i] >= 0 # (9)
+function JuMP.getvalue(up::LCPUpdate)
+    LCPUpdate(getvalue.((up.q, up.v, up.β, up.λ, up.c_n))...)
+end
+
+function update(q, v, model)
+    qnext = @variable(model, [1:length(q)], lowerbound=-10, basename="qnext", upperbound=10)
+    vnext = @variable(model, [1:length(v)], lowerbound=-10, basename="vnext", upperbound=10)
+    β = @variable(model,     [1:k],         lowerbound=0,   basename="β",     upperbound=100)
+    λ = @variable(model,                    lowerbound=0,   basename="λ",     upperbound=100)
+    c_n = @variable(model,                  lowerbound=0,   basename="c_n",   upperbound=100)
+
+    @constraints model begin
+        mass * (vnext - v) .== h * n * c_n .+ h * D * β .+ h * mass * g # (5)
+        qnext - q .== h .* vnext # (6)
+        n' * qnext >= 0 # (7)
+        λ * e + D' * vnext .>= 0 # (8)
+        μ * c_n - e' * β >= 0 # (9)
     end
-    
-    @disjunction m (n' * q[:, i + 1] == 0) (c_n[i] == 0) # (10)
-    Dtv = D' * v[:, i + 1]
+
+    @disjunction(model, (n' * qnext == 0), (c_n == 0)) # (10)
+    Dtv = D' * vnext
     for j in 1:k
-        @disjunction m ((λ[i] + Dtv[j]) == 0) (β[j, i] == 0) # (11)
+        @disjunction(model, ((λ + Dtv[j]) == 0), (β[j] == 0)) # (11)
     end
-    @disjunction m (μ * c_n[i] - e' * β[:, i] == 0) (λ[i] == 0) # (12)
+    @disjunction(model, (μ * c_n - e' * β == 0), (λ == 0)) # (12)
+
+    LCPUpdate(qnext, vnext, β, λ, c_n)
 end
 
-# Initial states
-@constraints m begin
-    q[:, 1] .== [-1, 0.5]
-    v[:, 1] .== [2, 0.5]
+"""
+Simulate the system using the LCP update. This creates and solves a small
+model for every time step 1:N. 
+"""
+function simulate(q0, v0, N)
+    q, v = q0, v0
+    results = LCPUpdate{Float64}[]
+    for i in 1:N
+        m = Model(solver=CbcSolver())
+        up = update(q, v, m)
+        solve(m)
+        push!(results, getvalue(up))
+        q = results[end].q
+        v = results[end].v
+    end
+    results
 end
 
-solve(m)
-@test getvalue(q[:, end]) ≈ [-0.16892500000000002, 0]
-@test getvalue(v[:, end]) ≈ [0, 0]
+"""
+Like simulate(), but solves for all N states in a single big
+optimization, rather than solving each state separately. This
+is more like what we would do if we had a control input we wanted
+to optimize over
+"""
+function optimize(q0, v0, N)::Vector{LCPUpdate{Float64}}
+    q, v = q0, v0
+    m = Model(solver=CbcSolver())
+    results = []
+    for i in 1:N
+        up = update(q, v, m)
+        push!(results, up)
+        q = results[end].q
+        v = results[end].v
+    end
+    solve(m)
+    getvalue.(results)
+end 
+
+q0 = [-1, 0.5]
+v0 = [2, 0.5]
+N = 30
+results1 = simulate(q0, v0, N)
+results2 = optimize(q0, v0, N)
+
+
+@test all([r.q for r in results1] .≈ [r.q for r in results2])
+@test all([r.v for r in results1] .≈ [r.v for r in results2])
+@test all([r.λ for r in results1] .≈ [r.λ for r in results2])
+
+q = [r.q for r in results1]
+v = [r.v for r in results1]
+@test q[end] ≈ [-0.16892500000000002, 0]
+@test v[end] ≈ [0, 0]
 
 if Pkg.installed("DrakeVisualizer") !== nothing
     @eval using DrakeVisualizer; 
@@ -70,8 +121,8 @@ if Pkg.installed("DrakeVisualizer") !== nothing
     vis = Visualizer()[:block]
     setgeometry!(vis, HyperRectangle(Vec(-0.1, -0.1, 0), Vec(0.2, 0.2, 0.2)))
 
-    for i in 1:length(time)
-        settransform!(vis, Translation(getvalue(q[1, i]), 0, getvalue(q[2, i])))
+    for qi in q
+        settransform!(vis, Translation(qi[1], 0, qi[2]))
         sleep(h)
     end
 end
