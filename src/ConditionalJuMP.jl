@@ -124,7 +124,7 @@ Base.@pure isjump(c::Conditional) = isjump(c.args[1])
 Base.@pure isjump(x::AbstractJuMPScalar) = true
 Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
 
-function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==)}}
+function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==), typeof(in)}}
     if isjump(args)
         Conditional(op, args...)
     else
@@ -208,16 +208,11 @@ function _addimplication!(indmap::IndicatorMap, z::AbstractJuMPScalar, imp::Impl
 end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
-    imp = imps[1]
-    c1, c2 = imp
-    comp1 = !c1
-    if isa(comp1, ComplementNotDefined)
-        throw(UnhandledComplementException(c1))
-    end
-    z = getindicator!(indmap, c1)
-    _addimplication!(indmap, z, imp)
-    implies!(indmap.model, 1 - z, comp1)
-    push!(indmap.disjunctions, Implication[imp, comp1=>nothing])
+    z = @variable(indmap.model, basename="z")
+    JuMP.fix(z, 1)
+    lhs, rhs = imps[1]
+    implies!(indmap.model, z, lhs)
+    implies!(indmap.model, z, rhs)
 end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
@@ -234,13 +229,25 @@ function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     push!(indmap.disjunctions, Implication[imps...])
 end
 
-function  disjunction!(indmap::IndicatorMap, conditions::Conditional...)
+function  disjunction!(indmap::IndicatorMap, 
+                       conditions::Union{Tuple{Vararg{<:Conditional}},
+                                         <:AbstractArray{<:Conditional}})
     disjunction!(indmap, (c -> (c => nothing)).(conditions))
 end
 
 disjunction!(m::Model, args...) = disjunction!(getindmap!(m), args...)
 
 implies!(m::Model, imp::Implication...) = disjunction!(m, imp)
+
+function implies!(m::Model, imp::Implication)
+    c1, c2 = imp
+    comp1 = !c1
+    if isa(comp1, ComplementNotDefined)
+        throw(UnhandledComplementException(c1))
+    end
+    disjunction!(m, (imp, (comp1 => nothing)))
+end
+
 
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), 2})
     lhs, rhs = c.args
