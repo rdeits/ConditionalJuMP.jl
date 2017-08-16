@@ -1,3 +1,5 @@
+module Complementarity
+
 using Polyhedra
 using StaticArrays
 using JuMP, ConditionalJuMP, Cbc
@@ -202,4 +204,6 @@ if Pkg.installed("DrakeVisualizer") !== nothing
         settransform!(vis, Translation(qi[1], 0, qi[2]))
         sleep(h)
     end
+end
+
 end

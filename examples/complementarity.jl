@@ -1,3 +1,5 @@
+module Complementarity
+
 using JuMP, ConditionalJuMP, Cbc
 using Base.Test
 
@@ -127,3 +129,4 @@ if Pkg.installed("DrakeVisualizer") !== nothing
     end
 end
 
+end
