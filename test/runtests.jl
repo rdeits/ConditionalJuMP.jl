@@ -423,6 +423,15 @@ end
         @test getvalue(x) ≈ -1
         @test getvalue(y) ≈ 0
     end
+
+    @testset "disjunction with one entry" begin
+        m = Model(solver=CbcSolver())
+        @variable m -1 <= x <= 1
+        @disjunction m x >= 0.25
+        @objective m Min x
+        solve(m)
+        @test getvalue(x) ≈ 0.25
+    end
 end
 
 @testset "examples" begin
@@ -439,5 +448,6 @@ end
 
     @testset "complementarity" begin
         include("../examples/complementarity.jl")
+        include("../examples/multicontact_complementarity.jl")
     end
 end
