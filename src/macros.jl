@@ -6,7 +6,7 @@ function _conditionalize_recursive!(ex::Expr)
             ex.args[i] = _conditionalize_recursive!(ex.args[i])
         end
         if !(ex.args[1] ∈ (:(=>),))
-            Expr(:call, :_conditional, ex.args[1], ex.args[2:end]...)
+            Expr(:call, :_conditional, esc(ex.args[1]), ex.args[2:end]...)
         else
             Expr(:call, ex.args...)
         end

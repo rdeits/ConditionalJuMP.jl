@@ -4,6 +4,23 @@ using JuMP
 using Cbc
 using Base.Test
 
+# Macro hygiene
+module MacroHygieneTest
+
+using Base.Test
+using ConditionalJuMP
+
+function f(x)
+    x + 1
+end
+
+@testset "macro hygiene" begin
+    x = 5
+    @test @?(f(x) <= 0) == false
+end
+
+end
+
 @testset "bounds" begin
     m = Model()
     @variable m 1 <= x <= 3
