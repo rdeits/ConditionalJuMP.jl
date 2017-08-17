@@ -149,7 +149,7 @@ function joint_limit(qnext, vnext, a::AbstractVector, b::Number, model::Model)
     JointLimitResult(λ, -λ * a)
 end
 
-function join_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
+function joint_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
     [joint_limit(qnext, vnext, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
 end
 
@@ -206,7 +206,7 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
 
     LCPUpdate(xnext, contact_results)
 
-    # joint_limit_results = join_limits(qnext, vnext, SimpleHRepresentation([0. 0 1; 0 0 -1], [1.5, -0.5]), model)
+    # joint_limit_results = joint_limits(qnext, vnext, SimpleHRepresentation([0. 0 1; 0 0 -1], [1.5, -0.5]), model)
 
     # internal_force = u + sum([r.generalized_force[3] for r in joint_limit_results])
 
