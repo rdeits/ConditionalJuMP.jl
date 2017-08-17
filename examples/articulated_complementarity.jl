@@ -51,15 +51,40 @@ struct ContactResult{T, Tf}
 end
 
 JuMP.getvalue(c::ContactResult) = ContactResult(getvalue.((c.β, c.λ, c.c_n, c.contact_force))...)
+function JuMP.setvalue(contact::ContactResult{<:JuMP.AbstractJuMPScalar}, seed::ContactResult{<:Number})
+    setvalue(contact.β, seed.β)
+    setvalue(contact.λ, seed.λ)
+    setvalue(contact.c_n, seed.c_n)
+    @assert getvalue(contact.contact_force) ≈ seed.contact_force
+end
+
+
+struct JointLimitResult{T, Tf <: AbstractVector}
+    λ::T
+    generalized_force::Tf
+end
+
+JuMP.getvalue(r::JointLimitResult) = JointLimitResult(getvalue.((r.λ, r.generalized_force))...)
+function JuMP.setvalue(r::JointLimitResult{<:JuMP.AbstractJuMPScalar}, seed::JointLimitResult{<:Number})
+    setvalue(r.λ, seed.λ)
+    @assert getvalue(r.generalized_force) ≈ seed.generalized_force
+end
 
 struct LCPUpdate{T, Tf}
     q::Vector{T}
     v::Vector{T}
     contacts::Vector{ContactResult{T, Tf}}
+    joint_contacts::Vector{JointLimitResult{T, Tf}}
 end
 
 JuMP.getvalue(up::LCPUpdate) =
-    LCPUpdate(getvalue.((up.q, up.v))..., getvalue.(up.contacts))
+    LCPUpdate(getvalue.((up.q, up.v))..., getvalue.(up.contacts), getvalue.(up.joint_contacts))
+function JuMP.setvalue(up::LCPUpdate{<:JuMP.AbstractJuMPScalar}, seed::LCPUpdate{<:Number})
+    setvalue(up.q, seed.q)
+    setvalue(up.v, seed.v)
+    setvalue.(up.contacts, seed.contacts)
+    setvalue.(up.joint_contacts, seed.joint_contacts)
+end
 
 function leg_position_in_world(q)
     q[1:2] + [0, -1] * q[3]
@@ -97,16 +122,33 @@ function contact_force(qnext, vnext, obstacle::Obstacle, model::Model)
     ContactResult(β, λ, c_n, contact_force)
 end
 
+function joint_limit(qnext, vnext, a::AbstractVector, b::Number, model::Model)
+    λ = @variable(model, lowerbound=0, upperbound=100, basename="λ")
+    separation = a' * qnext - b
+    @constraint model separation <= 0
+    @disjunction(model, separation == 0, λ == 0)
+
+    JointLimitResult(λ, -λ * a)
+end
+
+function join_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
+    [joint_limit(qnext, vnext, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
+end
+
 function update(q, v, u, env::Environment, model::Model)
     qnext = @variable(model, [1:length(q)], lowerbound=-10, basename="qnext", upperbound=10)
     vnext = @variable(model, [1:length(v)], lowerbound=-10, basename="vnext", upperbound=10)
 
     contacts = [contact_force(qnext, vnext, obs, model) for obs in env.obstacles]
-    total_force = sum([c.contact_force for c in contacts])
+    external_force = sum([c.contact_force for c in contacts])
+
+    join_limit_results = join_limits(qnext, vnext, SimpleHRepresentation([0. 0 1; 0 0 -1], [1.5, -0.5]), model)
+
+    internal_force = u + sum([r.generalized_force[3] for r in join_limit_results])
 
     @constraints model begin
-        mass * (vnext[1:2] - v[1:2]) .== h * mass * g .- [0, -1] * u  # (5)
-        mass * (vnext[3] - v[3]) == [0, -1]' * total_force + u
+        mass * (vnext[1:2] - v[1:2]) .== h * mass * g .- [0, -1] * internal_force  # (5)
+        mass * (vnext[3] - v[3]) == [0, -1]' * external_force + internal_force
         qnext - q .== h .* vnext # (6)
     end
 
@@ -119,7 +161,7 @@ function update(q, v, u, env::Environment, model::Model)
         model,
         [@?(leg_position_in_world(qnext) ∈ P) for P in env.free_regions]) # (7)
 
-    LCPUpdate(qnext, vnext, contacts)
+    LCPUpdate(qnext, vnext, contacts, join_limit_results)
 end
 
 function simulate(q0, v0, controller, env::Environment, N)
@@ -149,19 +191,6 @@ function optimize(q0, v0, env::Environment, N::Integer)::Vector{LCPUpdate{Float6
     end
     solve(m)
     getvalue.(results)
-end
-
-function JuMP.setvalue(contact::ContactResult{<:JuMP.AbstractJuMPScalar}, seed::ContactResult{<:Number})
-    setvalue(contact.β, seed.β)
-    setvalue(contact.λ, seed.λ)
-    setvalue(contact.c_n, seed.c_n)
-    @assert getvalue(contact.contact_force) ≈ seed.contact_force
-end
-
-function JuMP.setvalue(up::LCPUpdate{<:JuMP.AbstractJuMPScalar}, seed::LCPUpdate{<:Number})
-    setvalue(up.q, seed.q)
-    setvalue(up.v, seed.v)
-    setvalue.(up.contacts, seed.contacts)
 end
 
 function optimize(q0, v0, env::Environment, seed::Vector{<:LCPUpdate})
