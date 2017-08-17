@@ -3,6 +3,7 @@ module Complementarity
 using Polyhedra
 using StaticArrays
 using JuMP, ConditionalJuMP, Cbc
+using JuMP: GenericAffExpr
 using Base.Test
 using RigidBodyDynamics
 using RigidBodyDynamics: colwise
@@ -94,12 +95,7 @@ function leg_velocity_in_world(v)
     v[1:2] + [0, -1] * v[3]
 end
 
-struct ContactPoint{Tb <: RigidBody, Tp <: Point3D}
-    body::Tb
-    point::Tp
-end
-
-function resolve_contact(xnext::MechanismState, contact_point::ContactPoint, obstacle::Obstacle, model::Model, x_dynamics::MechanismState{<:Number})
+function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D, obstacle::Obstacle, model::Model, x_dynamics::MechanismState{<:Number})
     n = obstacle.contact_face.a
     D = contact_basis(obstacle)
     k = size(D, 2)
@@ -112,7 +108,7 @@ function resolve_contact(xnext::MechanismState, contact_point::ContactPoint, obs
         q = x[1:num_positions(xnext)]
         v = x[(num_positions(xnext)+1):end]
         x_diff = MechanismState(xnext.mechanism, q, v)
-        point_in_world = transform_to_root(x_diff, contact_point.point.frame) * contact_point.point
+        point_in_world = transform_to_root(x_diff, point.frame) * point
         separation = n' * point_in_world.v - obstacle.contact_face.β
     end
 
@@ -122,8 +118,8 @@ function resolve_contact(xnext::MechanismState, contact_point::ContactPoint, obs
         q = x[1:num_positions(xnext)]
         v = x[(num_positions(xnext)+1):end]
         x_diff = MechanismState(xnext.mechanism, q, v)
-        point_in_world = transform_to_root(x_diff, contact_point.point.frame) * contact_point.point
-        contact_velocity = point_velocity(twist_wrt_world(x_diff, contact_point.body), point_in_world).v
+        point_in_world = transform_to_root(x_diff, point.frame) * point
+        contact_velocity = point_velocity(twist_wrt_world(x_diff, body), point_in_world).v
     end
 
     contact_velocity = contact_velocity_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(contact_velocity_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics))
@@ -164,15 +160,14 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
     vnext = @variable(model, [1:num_velocities(x)], lowerbound=-10, basename="vnext", upperbound=10)
     xnext = MechanismState(mechanism, qnext, vnext)
 
-    contact_results = []
-    externalwrenches_list = []
+    contact_results = ContactResult{Variable,FreeVector3D{Vector{GenericAffExpr{M,Variable}}}}[]
+    externalwrenches = Dict{typeof(world), Wrench{GenericAffExpr{M,Variable}}}()
     for (body, contact_env) in env.contacts
-        geo_jac = geometric_jacobian(x_dynamics, path(mechanism, body, world))
-        wrenches = []
+        wrenches = Wrench{GenericAffExpr{M,Variable}}[]
 
         for contact_point in contact_env.points
             for obs in contact_env.obstacles
-                result = resolve_contact(xnext, ContactPoint(body, contact_point), obs, model, x_dynamics)
+                result = resolve_contact(xnext, body, contact_point, obs, model, x_dynamics)
                 push!(contact_results, result)
                 push!(wrenches, Wrench(
                     transform_to_root(x_dynamics, contact_point.frame) * contact_point, 
@@ -192,12 +187,8 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
             ConditionalJuMP.disjunction!(model,
                 [@?(point_in_world ∈ P) for P in contact_env.free_regions]) # (7)
         end
-        push!(externalwrenches_list, (body => sum(wrenches)))
+        externalwrenches[body] = sum(wrenches)
     end
-    externalwrenches = Dict(externalwrenches_list)
-    contact_results_type = typeof(contact_results[1])
-    contact_results_typed = convert(Vector{contact_results_type}, contact_results)
-
 
     H = mass_matrix(x_dynamics)
     bias = dynamics_bias(x_dynamics, externalwrenches)
@@ -213,7 +204,7 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
     config_derivative = ForwardDiff.jacobian(_config_derivative, velocity(x_dynamics)) * velocity(xnext)
     @constraint(model, qnext .- configuration(x) .== Δt .* config_derivative)
 
-    LCPUpdate(xnext, contact_results_typed)
+    LCPUpdate(xnext, contact_results)
 
     # joint_limit_results = join_limits(qnext, vnext, SimpleHRepresentation([0. 0 1; 0 0 -1], [1.5, -0.5]), model)
 
