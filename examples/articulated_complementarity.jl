@@ -140,20 +140,41 @@ function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D,
     ContactResult(β, λ, c_n, contact_force)
 end
 
-function joint_limit(qnext, vnext, a::AbstractVector, b::Number, model::Model)
+# function joint_limit(qnext, vnext, a::AbstractVector, b::Number, model::Model)
+#     λ = @variable(model, lowerbound=0, upperbound=100, basename="λ")
+#     separation = a' * qnext - b
+#     @constraint model separation <= 0
+#     @disjunction(model, separation == 0, λ == 0)
+
+#     JointLimitResult(λ, -λ * a)
+# end
+
+function resolve_joint_limit(xnext::MechanismState, joint::Joint, a::AbstractVector, b::Number, model::Model)
     λ = @variable(model, lowerbound=0, upperbound=100, basename="λ")
-    separation = a' * qnext - b
+    q = configuration(xnext, joint)
+    separation = a' * q - b
     @constraint model separation <= 0
     @disjunction(model, separation == 0, λ == 0)
 
     JointLimitResult(λ, -λ * a)
 end
 
-function joint_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
-    [joint_limit(qnext, vnext, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
+# function joint_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
+#     [joint_limit(qnext, vnext, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
+# end
+
+function resolve_joint_limits(xnext::MechanismState, joint::Joint, limits::HRepresentation, model::Model)
+    [resolve_joint_limit(xnext, joint, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
 end
 
-function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::Model, x_dynamics=x) where {X, M}
+
+function update(x::MechanismState{X, M}, 
+                u, 
+                joint_limits::Associative{<:RigidBody, <:HRepresentation}, 
+                env::Environment, 
+                Δt::Real, 
+                model::Model, 
+                x_dynamics=x) where {X, M}
     mechanism = x.mechanism
     world = root_body(mechanism)
     qnext = @variable(model, [1:num_positions(x)], lowerbound=-10, basename="qnext", upperbound=10)
@@ -190,6 +211,8 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
         externalwrenches[body] = sum(wrenches)
     end
 
+    joint_limit_results = Dict([joint => resolve_joint_limits(xnext, joint, limits, model) for (joint, limits) in joint_limits])
+
     H = mass_matrix(x_dynamics)
     bias = dynamics_bias(x_dynamics, externalwrenches)
 
@@ -213,13 +236,18 @@ function update(x::MechanismState{X, M}, u, env::Environment, Δt::Real, model::
     # LCPUpdate(qnext, vnext, contact_results, joint_limit_results)
 end
 
-function simulate(x0::MechanismState, controller, env::Environment, Δt::Real, N::Integer)
+function simulate(x0::MechanismState, 
+                  controller, 
+                  limits::Associative{<:RigidBody, <:HRepresentation}, 
+                  env::Environment, 
+                  Δt::Real, 
+                  N::Integer)
     results = []  # todo: type this
     x = x0
     for i in 1:N
         m = Model(solver=CbcSolver())
         u = controller(x)
-        up = update(x, u, env, Δt, m)
+        up = update(x, u, limits, env, Δt, m)
         # up = update(q, v, u, env, m)
         solve(m)
         push!(results, getvalue(up))
