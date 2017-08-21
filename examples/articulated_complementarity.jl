@@ -55,7 +55,7 @@ end
 
 JuMP.getvalue(f::FreeVector3D) = FreeVector3D(f.frame, getvalue(f.v))
 
-struct JointLimitResult{T, Tf <: AbstractVector}
+struct JointLimitResult{T, Tf}
     λ::T
     generalized_force::Tf
 end
@@ -70,29 +70,23 @@ function JuMP.getvalue(x::MechanismState{<:JuMP.AbstractJuMPScalar})
     MechanismState(x.mechanism, getvalue(configuration(x)), getvalue(velocity(x)), getvalue(additional_state(x)))
 end
 
-struct LCPUpdate{T, M <: MechanismState{T}, Tf}
+struct LCPUpdate{T, M <: MechanismState{T}, Tf, D <: Dict{<:Joint, <:Vector{<:JointLimitResult{T}}}}
     state::M
     contacts::Vector{ContactResult{T, Tf}}
-    # joint_contacts::Vector{JointLimitResult{T, Tf}}
+    joint_contacts::D
 end
 
-# JuMP.getvalue(up::LCPUpdate) =
-#     LCPUpdate(getvalue(up.state), getvalue.(up.contacts), getvalue.(up.joint_contacts))
+JuMP.getvalue(d::Dict{<:Joint, <:Vector{<:JointLimitResult}}) = Dict(zip(keys(d), [getvalue.(v) for v in values(d)]))
+
 JuMP.getvalue(up::LCPUpdate) =
-    LCPUpdate(getvalue(up.state), getvalue.(up.contacts))
+    LCPUpdate(getvalue(up.state), getvalue.(up.contacts), getvalue(up.joint_contacts))
+
+JuMP.setvalue(d::Dict{<:Joint, <:Vector{<:JointLimitResult}}, seed::Dict) = [setvalue.(v1, v2) for (v1, v2) in zip(values(d), values(seed))]
 
 function JuMP.setvalue(up::LCPUpdate{<:JuMP.AbstractJuMPScalar}, seed::LCPUpdate{<:Number})
     setvalue(up.state, seed.state)
     setvalue.(up.contacts, seed.contacts)
-    setvalue.(up.joint_contacts, seed.joint_contacts)
-end
-
-function leg_position_in_world(q)
-    q[1:2] + [0, -1] * q[3]
-end
-
-function leg_velocity_in_world(v)
-    v[1:2] + [0, -1] * v[3]
+    setvalue(up.joint_contacts, seed.joint_contacts)
 end
 
 function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D, obstacle::Obstacle, model::Model, x_dynamics::MechanismState{<:Number})
@@ -113,6 +107,8 @@ function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D,
     end
 
     separation = separation_in_world(state_vector(x_dynamics)) + (state_vector(xnext) - state_vector(x_dynamics))' * ForwardDiff.gradient(separation_in_world, state_vector(x_dynamics))
+
+    @show separation
 
     function contact_velocity_in_world(x)
         q = x[1:num_positions(xnext)]
@@ -170,7 +166,7 @@ end
 
 function update(x::MechanismState{X, M}, 
                 u, 
-                joint_limits::Associative{<:RigidBody, <:HRepresentation}, 
+                joint_limits::Associative{<:Joint, <:HRepresentation}, 
                 env::Environment, 
                 Δt::Real, 
                 model::Model, 
@@ -211,34 +207,35 @@ function update(x::MechanismState{X, M},
         externalwrenches[body] = sum(wrenches)
     end
 
-    joint_limit_results = Dict([joint => resolve_joint_limits(xnext, joint, limits, model) for (joint, limits) in joint_limits])
-
-    H = mass_matrix(x_dynamics)
-    bias = dynamics_bias(x_dynamics, externalwrenches)
-
-    @constraint(model, H * (vnext - velocity(x)) .== Δt * (u .- bias)) # (5)
-
     function _config_derivative(v)
         q = oftype(v, configuration(x_dynamics))
         x_diff = MechanismState(mechanism, q, v)
         configuration_derivative(x_diff)
     end
 
-    config_derivative = ForwardDiff.jacobian(_config_derivative, velocity(x_dynamics)) * velocity(xnext)
-    @constraint(model, qnext .- configuration(x) .== Δt .* config_derivative)
+    jac_dq_wrt_v = ForwardDiff.jacobian(_config_derivative, velocity(x_dynamics))
 
-    LCPUpdate(xnext, contact_results)
+    joint_limit_results = Dict([joint => resolve_joint_limits(xnext, joint, limits, model) for (joint, limits) in joint_limits])
+    joint_limit_forces = zeros(GenericAffExpr{M, Variable}, num_velocities(x))
+    for (joint, results) in joint_limit_results
+        for result in results
+            joint_limit_forces .+= (jac_dq_wrt_v')[:, parentindexes(configuration(x, joint))...] * result.generalized_force
+        end
+    end
 
-    # joint_limit_results = joint_limits(qnext, vnext, SimpleHRepresentation([0. 0 1; 0 0 -1], [1.5, -0.5]), model)
+    H = mass_matrix(x_dynamics)
+    bias = dynamics_bias(x_dynamics, externalwrenches)
+    config_derivative = jac_dq_wrt_v * velocity(xnext)
 
-    # internal_force = u + sum([r.generalized_force[3] for r in joint_limit_results])
+    @constraint(model, H * (vnext - velocity(x)) .== Δt * (u .+ joint_limit_forces .- bias)) # (5)
+    @constraint(model, qnext .- configuration(x) .== Δt .* config_derivative) # (6)
 
-    # LCPUpdate(qnext, vnext, contact_results, joint_limit_results)
+    LCPUpdate(xnext, contact_results, joint_limit_results)
 end
 
 function simulate(x0::MechanismState, 
                   controller, 
-                  limits::Associative{<:RigidBody, <:HRepresentation}, 
+                  joint_limits::Associative{<:Joint, <:HRepresentation}, 
                   env::Environment, 
                   Δt::Real, 
                   N::Integer)
@@ -247,7 +244,7 @@ function simulate(x0::MechanismState,
     for i in 1:N
         m = Model(solver=CbcSolver())
         u = controller(x)
-        up = update(x, u, limits, env, Δt, m)
+        up = update(x, u, joint_limits, env, Δt, m)
         # up = update(q, v, u, env, m)
         solve(m)
         push!(results, getvalue(up))
@@ -256,35 +253,44 @@ function simulate(x0::MechanismState,
     results
 end
 
-function optimize(q0, v0, env::Environment, N::Integer)::Vector{LCPUpdate{Float64}}
-    q, v = q0, v0
-    m = Model(solver=CbcSolver())
-    results = []
-    for i in 1:N
-        up = update(q, v, env, m)
-        push!(results, up)
-        q = results[end].q
-        v = results[end].v
+function optimize(x0::MechanismState, 
+                  joint_limits::Associative{<:Joint, <:HRepresentation}, 
+                  env::Environment, 
+                  Δt,
+                  N::Integer,
+                  solver=CbcSolver())
+    x = x0
+    m = Model(solver=solver)
+    results = map(1:N) do i
+        u = @variable(m, [1:num_velocities(x0)], basename="u_$i", lowerbound=-10, upperbound=10)
+        up = update(x, u, joint_limits, env, Δt, m, x0)
+        x = up.state
+        up
     end
-    solve(m)
-    getvalue.(results)
+    m, results
+    # solve(m)
+    # getvalue.(results)
 end
 
-function optimize(q0, v0, env::Environment, seed::Vector{<:LCPUpdate})
-    q, v = q0, v0
+function optimize(x0::MechanismState, 
+                  joint_limits::Associative{<:Joint, <:HRepresentation}, 
+                  env::Environment, 
+                  Δt,
+                  seed::Vector{<:LCPUpdate})
+    x = x0
     m = Model(solver=CbcSolver())
-    results = []
-    for i in 1:N
-        up = update(q, v, env, m)
+    results = map(1:N) do i
+        u = @variable(m, [1:num_velocities(x0)], basename="u_$i", lowerbound=-10, upperbound=10)
+        up = update(x, u, joint_limits, env, Δt, m, x0)
         setvalue(up, seed[i])
-        push!(results, up)
-        q = results[end].q
-        v = results[end].v
+        x = up.state
+        up
     end
     warmstart!(m, true)
     @assert sum(m.colCat .== :Bin) == 0
-    solve(m)
-    getvalue.(results)
+    m, results
+    # solve(m)
+    # getvalue.(results)
 end
 
 end
