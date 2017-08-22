@@ -59,6 +59,7 @@ struct ContactResult{T, M}
     β::Vector{T}
     λ::T
     c_n::T
+    point::Point3D{SVector{3, M}}
     obs::Obstacle{M}
 end
 
@@ -73,7 +74,7 @@ function contact_force(r::ContactResult)
     FreeVector3D(n.frame, r.c_n .* n.v .+ sum(broadcast.(*, _vec.(D), r.β)))
 end
 
-JuMP.getvalue(c::ContactResult) = ContactResult(getvalue.((c.β, c.λ, c.c_n))..., c.obs)
+JuMP.getvalue(c::ContactResult) = ContactResult(getvalue.((c.β, c.λ, c.c_n))..., c.point, c.obs)
 function JuMP.setvalue(contact::ContactResult{<:JuMP.AbstractJuMPScalar}, seed::ContactResult{<:Number})
     @assert contact.obs == seed.obs
     setvalue(contact.β, seed.β)
@@ -98,16 +99,21 @@ function JuMP.getvalue(x::MechanismState{<:JuMP.AbstractJuMPScalar})
     MechanismState(x.mechanism, getvalue(configuration(x)), getvalue(velocity(x)), getvalue(additional_state(x)))
 end
 
-struct LCPUpdate{T, M, S <: MechanismState{T, M}, J <: Joint, Tf}
+struct LCPUpdate{T, M, S <: MechanismState{T, M}, I <:AbstractVector, J <: Joint, Tf}
     state::S
-    contacts::Vector{ContactResult{T, M}}
+    input::I
+    contacts::Dict{RigidBody{M}, Vector{ContactResult{T, M}}}
     joint_contacts::Dict{J, Vector{JointLimitResult{T, Tf}}}
 end
 
-JuMP.getvalue(d::Dict{<:Joint, <:Vector{<:JointLimitResult}}) = Dict(zip(keys(d), [getvalue.(v) for v in values(d)]))
+JuMP.getvalue(p::Pair{<:RigidBody, <:AbstractVector{<:ContactResult}}) = p.first => getvalue.(p.second)
+JuMP.getvalue(p::Pair{<:Joint, <:AbstractVector{<:JointLimitResult}}) = p.first => getvalue.(p.second)
+
+_getvalue(x::AbstractVector{<:Number}) = x
+_getvalue(x::AbstractVector{<:JuMP.AbstractJuMPScalar}) = getvalue(x)
 
 JuMP.getvalue(up::LCPUpdate) =
-    LCPUpdate(getvalue(up.state), getvalue.(up.contacts), getvalue(up.joint_contacts))
+    LCPUpdate(getvalue(up.state), _getvalue(up.input), map(getvalue, up.contacts), map(getvalue, up.joint_contacts))
 
 JuMP.setvalue(d::Dict{<:Joint, <:Vector{<:JointLimitResult}}, seed::Dict) = [setvalue.(v1, v2) for (v1, v2) in zip(values(d), values(seed))]
 
@@ -148,7 +154,6 @@ function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D,
     D_transpose_times_v = [dot(d, contact_velocity) for d in D]
 
     @constraints model begin
-        # λ .+ D' * contact_velocity .>= 0 # (8)
         λ .+ D_transpose_times_v .>= 0 # (8)
         obstacle.μ * c_n .- sum(β) >= 0 # (9)
     end
@@ -159,7 +164,7 @@ function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D,
     end
     @disjunction(model, (obstacle.μ * c_n - sum(β) == 0), (λ == 0)) # (12)
 
-    ContactResult(β, λ, c_n, obstacle)
+    ContactResult(β, λ, c_n, point, obstacle)
 end
 
 function resolve_joint_limit(xnext::MechanismState, joint::Joint, a::AbstractVector, b::Number, model::Model)
@@ -176,7 +181,6 @@ function resolve_joint_limits(xnext::MechanismState, joint::Joint, limits::HRepr
     [resolve_joint_limit(xnext, joint, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
 end
 
-
 function update(x::MechanismState{X, M}, 
                 u, 
                 joint_limits::Associative{<:Joint, <:HRepresentation}, 
@@ -190,20 +194,21 @@ function update(x::MechanismState{X, M},
     vnext = @variable(model, [1:num_velocities(x)], lowerbound=-10, basename="vnext", upperbound=10)
     xnext = MechanismState(mechanism, qnext, vnext)
 
-    contact_results = ContactResult{Variable, M}[]
-    externalwrenches = Dict{typeof(world), Wrench{GenericAffExpr{M,Variable}}}()
+    contact_results = map(env.contacts) do item
+        body, contact_env = item
+        body => [resolve_contact(xnext, body, contact_point, obstacle, model, x_dynamics)
+            for contact_point in contact_env.points for obstacle in contact_env.obstacles]
+    end
+
+    externalwrenches = map(contact_results) do item
+        body, results = item
+        body => sum([Wrench(transform_to_root(x_dynamics, result.point.frame) * result.point,
+                    contact_force(result)) for result in results])
+    end
+
+
     for (body, contact_env) in env.contacts
-        wrenches = Wrench{GenericAffExpr{M,Variable}}[]
-
         for contact_point in contact_env.points
-            for obs in contact_env.obstacles
-                result = resolve_contact(xnext, body, contact_point, obs, model, x_dynamics)
-                push!(contact_results, result)
-                push!(wrenches, Wrench(
-                    transform_to_root(x_dynamics, contact_point.frame) * contact_point, 
-                    contact_force(result)))
-            end
-
             function _point_in_world(x)
                 q = x[1:num_positions(xnext)]
                 v = x[(num_positions(xnext)+1):end]
@@ -217,7 +222,6 @@ function update(x::MechanismState{X, M},
             ConditionalJuMP.disjunction!(model,
                 [@?(position ∈ P) for P in contact_env.free_regions]) # (7)
         end
-        externalwrenches[body] = sum(wrenches)
     end
 
     function _config_derivative(v)
@@ -243,7 +247,7 @@ function update(x::MechanismState{X, M},
     @constraint(model, H * (vnext - velocity(x)) .== Δt * (u .+ joint_limit_forces .- bias)) # (5)
     @constraint(model, qnext .- configuration(x) .== Δt .* config_derivative) # (6)
 
-    LCPUpdate(xnext, contact_results, joint_limit_results)
+    LCPUpdate(xnext, u, contact_results, joint_limit_results)
 end
 
 function simulate(x0::MechanismState, 
