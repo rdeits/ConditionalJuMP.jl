@@ -465,6 +465,5 @@ end
 
     @testset "complementarity" begin
         include("../examples/complementarity.jl")
-        include("../examples/multicontact_complementarity.jl")
     end
 end
