@@ -10,47 +10,75 @@ using RigidBodyDynamics: colwise
 using Rotations
 using ForwardDiff
 
-struct Obstacle{T, H <: HRepresentation{3, T}}
-    interior::H
+struct Obstacle{T}
+    frame::CartesianFrame3D
+    interior::SimpleHRepresentation{3, T}
     contact_face::HalfSpace{3, T}
     μ::T
 end
 
-struct ContactEnvironment{P <: Point3D, T, H <: HRepresentation{3, T}}
-    points::Vector{P}
-    obstacles::Vector{Obstacle{T, H}}
-    free_regions::Vector{H}
+struct FreeRegion{T}
+    frame::CartesianFrame3D
+    interior::SimpleHRepresentation{3, T}
 end
 
-struct Environment{B <: RigidBody, C <: ContactEnvironment}
-    contacts::Dict{B, C}
+struct ContactEnvironment{T}
+    points::Vector{Point3D{SVector{3, T}}}
+    obstacles::Vector{Obstacle{T}}
+    free_regions::Vector{FreeRegion{T}}
 end
 
-function contact_basis(face::HalfSpace{3}, μ)
-    θ = atan(μ)
+struct Environment{T}
+    contacts::Dict{RigidBody{T}, ContactEnvironment{T}}
+end
+
+function contact_basis(obs::Obstacle)
+    θ = atan(obs.μ)
     R = RotY(θ)
-    hcat(R * face.a, R' * face.a)
+    SVector(
+        FreeVector3D(obs.frame, R * obs.contact_face.a), 
+        FreeVector3D(obs.frame, R' * obs.contact_face.a))
 end
 
-contact_basis(obs::Obstacle) = contact_basis(obs.contact_face, obs.μ)
+contact_normal(obs::Obstacle) = FreeVector3D(obs.frame, obs.contact_face.a)
 
-function ConditionalJuMP.Conditional(op::typeof(in), x::AbstractVector, P::HRepresentation)
-    ConditionalJuMP.Conditional(&, [@?(P.A[i, :]' * x <= P.b[i]) for i in 1:length(P)]...)
+function separation(obs::Obstacle, p::Point3D)
+    @framecheck obs.frame p.frame
+    n = contact_normal(obs)
+    n.v' * p.v - obs.contact_face.β
 end
 
-struct ContactResult{T, Tf}
+Base.@pure ConditionalJuMP.isjump(::Point3D{<:AbstractArray{<:JuMP.AbstractJuMPScalar}}) = true
+
+function ConditionalJuMP.Conditional(op::typeof(in), x::Point3D, P::FreeRegion)
+    @framecheck(x.frame, P.frame)
+    ConditionalJuMP.Conditional(&, [@?(P.interior.A[i, :]' * x.v <= P.interior.b[i]) for i in 1:length(P.interior)]...)
+end
+
+struct ContactResult{T, M}
     β::Vector{T}
     λ::T
     c_n::T
-    contact_force::Tf
+    obs::Obstacle{M}
 end
 
-JuMP.getvalue(c::ContactResult) = ContactResult(getvalue.((c.β, c.λ, c.c_n, c.contact_force))...)
+_vec(f::FreeVector3D) = convert(Vector, f.v)
+_vec(p::Point3D) = convert(Vector, p.v)
+
+function contact_force(r::ContactResult)
+    n = contact_normal(r.obs)
+    D = contact_basis(r.obs)
+    @framecheck(n.frame, D[1].frame)
+    # r.c_n * n .+ D * r.β
+    FreeVector3D(n.frame, r.c_n .* n.v .+ sum(broadcast.(*, _vec.(D), r.β)))
+end
+
+JuMP.getvalue(c::ContactResult) = ContactResult(getvalue.((c.β, c.λ, c.c_n))..., c.obs)
 function JuMP.setvalue(contact::ContactResult{<:JuMP.AbstractJuMPScalar}, seed::ContactResult{<:Number})
+    @assert contact.obs == seed.obs
     setvalue(contact.β, seed.β)
     setvalue(contact.λ, seed.λ)
     setvalue(contact.c_n, seed.c_n)
-    @assert getvalue(contact.contact_force) ≈ seed.contact_force
 end
 
 JuMP.getvalue(f::FreeVector3D) = FreeVector3D(f.frame, getvalue(f.v))
@@ -70,10 +98,10 @@ function JuMP.getvalue(x::MechanismState{<:JuMP.AbstractJuMPScalar})
     MechanismState(x.mechanism, getvalue(configuration(x)), getvalue(velocity(x)), getvalue(additional_state(x)))
 end
 
-struct LCPUpdate{T, M <: MechanismState{T}, Tf, D <: Dict{<:Joint, <:Vector{<:JointLimitResult{T}}}}
-    state::M
-    contacts::Vector{ContactResult{T, Tf}}
-    joint_contacts::D
+struct LCPUpdate{T, M, S <: MechanismState{T, M}, J <: Joint, Tf}
+    state::S
+    contacts::Vector{ContactResult{T, M}}
+    joint_contacts::Dict{J, Vector{JointLimitResult{T, Tf}}}
 end
 
 JuMP.getvalue(d::Dict{<:Joint, <:Vector{<:JointLimitResult}}) = Dict(zip(keys(d), [getvalue.(v) for v in values(d)]))
@@ -90,27 +118,24 @@ function JuMP.setvalue(up::LCPUpdate{<:JuMP.AbstractJuMPScalar}, seed::LCPUpdate
 end
 
 function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D, obstacle::Obstacle, model::Model, x_dynamics::MechanismState{<:Number})
-    n = obstacle.contact_face.a
     D = contact_basis(obstacle)
-    k = size(D, 2)
+    k = length(D)
 
     β = @variable(model,   [1:k], lowerbound=0,   basename="β",     upperbound=100)
     λ = @variable(model,          lowerbound=0,   basename="λ",     upperbound=100)
     c_n = @variable(model,        lowerbound=0,   basename="c_n",   upperbound=100)
 
-    function separation_in_world(x)
+    function _separation(x)
         q = x[1:num_positions(xnext)]
         v = x[(num_positions(xnext)+1):end]
         x_diff = MechanismState(xnext.mechanism, q, v)
         point_in_world = transform_to_root(x_diff, point.frame) * point
-        separation = n' * point_in_world.v - obstacle.contact_face.β
+        separation(obstacle, point_in_world)
     end
 
-    separation = separation_in_world(state_vector(x_dynamics)) + (state_vector(xnext) - state_vector(x_dynamics))' * ForwardDiff.gradient(separation_in_world, state_vector(x_dynamics))
+    separation_from_obstacle = _separation(state_vector(x_dynamics)) + (state_vector(xnext) - state_vector(x_dynamics))' * ForwardDiff.gradient(_separation, state_vector(x_dynamics))
 
-    @show separation
-
-    function contact_velocity_in_world(x)
+    function _contact_velocity(x)
         q = x[1:num_positions(xnext)]
         v = x[(num_positions(xnext)+1):end]
         x_diff = MechanismState(xnext.mechanism, q, v)
@@ -118,32 +143,24 @@ function resolve_contact(xnext::MechanismState, body::RigidBody, point::Point3D,
         contact_velocity = point_velocity(twist_wrt_world(x_diff, body), point_in_world).v
     end
 
-    contact_velocity = contact_velocity_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(contact_velocity_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics))
+    contact_velocity = FreeVector3D(root_frame(xnext.mechanism), _contact_velocity(state_vector(x_dynamics)) + ForwardDiff.jacobian(_contact_velocity, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics)))
+
+    D_transpose_times_v = [dot(d, contact_velocity) for d in D]
 
     @constraints model begin
-        λ .+ D' * contact_velocity .>= 0 # (8)
+        # λ .+ D' * contact_velocity .>= 0 # (8)
+        λ .+ D_transpose_times_v .>= 0 # (8)
         obstacle.μ * c_n .- sum(β) >= 0 # (9)
     end
 
-    @disjunction(model, (separation == 0), (c_n == 0)) # (10)
-    Dtv = D' * contact_velocity
+    @disjunction(model, (separation_from_obstacle == 0), (c_n == 0)) # (10)
     for j in 1:k
-        @disjunction(model, ((λ + Dtv[j]) == 0), β[j] == 0) # (11)
+        @disjunction(model, ((λ + D_transpose_times_v[j]) == 0), β[j] == 0) # (11)
     end
     @disjunction(model, (obstacle.μ * c_n - sum(β) == 0), (λ == 0)) # (12)
 
-    contact_force = FreeVector3D(root_frame(xnext.mechanism), c_n * n .+ D * β)
-    ContactResult(β, λ, c_n, contact_force)
+    ContactResult(β, λ, c_n, obstacle)
 end
-
-# function joint_limit(qnext, vnext, a::AbstractVector, b::Number, model::Model)
-#     λ = @variable(model, lowerbound=0, upperbound=100, basename="λ")
-#     separation = a' * qnext - b
-#     @constraint model separation <= 0
-#     @disjunction(model, separation == 0, λ == 0)
-
-#     JointLimitResult(λ, -λ * a)
-# end
 
 function resolve_joint_limit(xnext::MechanismState, joint::Joint, a::AbstractVector, b::Number, model::Model)
     λ = @variable(model, lowerbound=0, upperbound=100, basename="λ")
@@ -154,10 +171,6 @@ function resolve_joint_limit(xnext::MechanismState, joint::Joint, a::AbstractVec
 
     JointLimitResult(λ, -λ * a)
 end
-
-# function joint_limits(qnext, vnext, limits::SimpleHRepresentation, model::Model)
-#     [joint_limit(qnext, vnext, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
-# end
 
 function resolve_joint_limits(xnext::MechanismState, joint::Joint, limits::HRepresentation, model::Model)
     [resolve_joint_limit(xnext, joint, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
@@ -177,7 +190,7 @@ function update(x::MechanismState{X, M},
     vnext = @variable(model, [1:num_velocities(x)], lowerbound=-10, basename="vnext", upperbound=10)
     xnext = MechanismState(mechanism, qnext, vnext)
 
-    contact_results = ContactResult{Variable,FreeVector3D{Vector{GenericAffExpr{M,Variable}}}}[]
+    contact_results = ContactResult{Variable, M}[]
     externalwrenches = Dict{typeof(world), Wrench{GenericAffExpr{M,Variable}}}()
     for (body, contact_env) in env.contacts
         wrenches = Wrench{GenericAffExpr{M,Variable}}[]
@@ -188,7 +201,7 @@ function update(x::MechanismState{X, M},
                 push!(contact_results, result)
                 push!(wrenches, Wrench(
                     transform_to_root(x_dynamics, contact_point.frame) * contact_point, 
-                    result.contact_force))
+                    contact_force(result)))
             end
 
             function _point_in_world(x)
@@ -199,10 +212,10 @@ function update(x::MechanismState{X, M},
                 point_in_world.v
             end
 
-            point_in_world = _point_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(_point_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics))
+            position = Point3D(root_frame(mechanism), _point_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(_point_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics)))
 
             ConditionalJuMP.disjunction!(model,
-                [@?(point_in_world ∈ P) for P in contact_env.free_regions]) # (7)
+                [@?(position ∈ P) for P in contact_env.free_regions]) # (7)
         end
         externalwrenches[body] = sum(wrenches)
     end
@@ -245,13 +258,17 @@ function simulate(x0::MechanismState,
         m = Model(solver=CbcSolver())
         u = controller(x)
         up = update(x, u, joint_limits, env, Δt, m)
-        # up = update(q, v, u, env, m)
         solve(m)
         push!(results, getvalue(up))
         x = results[end].state
     end
     results
 end
+
+# TODO: 
+# * record u in LCPUpdate
+# * lots of cleanup
+# * figure out a neater way to handle x_dynamics
 
 function optimize(x0::MechanismState, 
                   joint_limits::Associative{<:Joint, <:HRepresentation}, 
