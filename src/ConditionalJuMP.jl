@@ -4,7 +4,6 @@ module ConditionalJuMP
 
 using JuMP
 using JuMP: AbstractJuMPScalar
-using MacroTools: @capture
 using IntervalArithmetic: Interval
 import Base: <=, ==, >=, !, &
 
