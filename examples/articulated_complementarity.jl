@@ -181,6 +181,26 @@ function resolve_joint_limits(xnext::MechanismState, joint::Joint, limits::HRepr
     [resolve_joint_limit(xnext, joint, limits.A[i, :], limits.b[i], model) for i in 1:length(limits)]
 end
 
+function add_free_region_constraints!(model::Model, xnext::MechanismState, env::Environment, x_dynamics::MechanismState)
+    for (body, contact_env) in env.contacts
+        for contact_point in contact_env.points
+            function _point_in_world(x)
+                q = x[1:num_positions(xnext)]
+                v = x[(num_positions(xnext)+1):end]
+                x_diff = MechanismState(xnext.mechanism, q, v)
+                point_in_world = transform_to_root(x_diff, contact_point.frame) * contact_point
+                point_in_world.v
+            end
+
+            position = Point3D(root_frame(xnext.mechanism), _point_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(_point_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics)))
+
+            ConditionalJuMP.disjunction!(model,
+                [@?(position ∈ P) for P in contact_env.free_regions]) # (7)
+        end
+    end
+end
+
+
 function update(x::MechanismState{X, M}, 
                 u, 
                 joint_limits::Associative{<:Joint, <:HRepresentation}, 
@@ -206,23 +226,7 @@ function update(x::MechanismState{X, M},
                     contact_force(result)) for result in results])
     end
 
-
-    for (body, contact_env) in env.contacts
-        for contact_point in contact_env.points
-            function _point_in_world(x)
-                q = x[1:num_positions(xnext)]
-                v = x[(num_positions(xnext)+1):end]
-                x_diff = MechanismState(xnext.mechanism, q, v)
-                point_in_world = transform_to_root(x_diff, contact_point.frame) * contact_point
-                point_in_world.v
-            end
-
-            position = Point3D(root_frame(mechanism), _point_in_world(state_vector(x_dynamics)) + ForwardDiff.jacobian(_point_in_world, state_vector(x_dynamics)) * (state_vector(xnext) - state_vector(x_dynamics)))
-
-            ConditionalJuMP.disjunction!(model,
-                [@?(position ∈ P) for P in contact_env.free_regions]) # (7)
-        end
-    end
+    add_free_region_constraints!(model, xnext, env, x_dynamics)
 
     function _config_derivative(v)
         q = oftype(v, configuration(x_dynamics))
