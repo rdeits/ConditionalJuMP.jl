@@ -47,14 +47,14 @@ function _setvalue(s::JuMP.GenericAffExpr, x)
     _setvalue(s.vars[1], (x - s.constant) / s.coeffs[1])
 end
 
-struct Conditional{Op, N, Args<:Tuple{Vararg{<:Any, N}}}
+struct Conditional{Op, Args<:Tuple}
     op::Op
     args::Args
 end
 
-function Conditional(op::Op, args::Vararg{<:Any, N}) where {Op, N}
+function Conditional(op::Op, args...) where {Op}
     canonical_op, canonical_args = canonicalize(op, args)
-    Conditional{typeof(canonical_op), N, typeof(canonical_args)}(
+    Conditional{typeof(canonical_op), typeof(canonical_args)}(
         canonical_op, canonical_args)
 end
 
@@ -70,9 +70,11 @@ end
 Conditional(::typeof(>=), x, y) = Conditional(<=, -x, -y)
 (&)(c1::Conditional, c2::Conditional) = Conditional(&, c1, c2)
 
-_getvalue(c::Conditional{typeof(<=), 2}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
-_getvalue(c::Conditional{typeof(>=), 2}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
-_getvalue(c::Conditional{typeof(==), 2}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
+Narg{N} = Tuple{Vararg{Any, N}}
+
+_getvalue(c::Conditional{typeof(<=), <:Narg{2}}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
+_getvalue(c::Conditional{typeof(>=), <:Narg{2}}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
+_getvalue(c::Conditional{typeof(==), <:Narg{2}}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
 _getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
 
 Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
@@ -97,7 +99,7 @@ function _hash(x::JuMP.GenericAffExpr, h::UInt)
     h
 end
 
-function Base.hash(c::Union{<:Conditional{typeof(<=), 2}, <:Conditional{typeof(==), 2}}, h::UInt)
+function Base.hash(c::Union{<:Conditional{typeof(<=), <:Narg{2}}, <:Conditional{typeof(==), <:Narg{2}}}, h::UInt)
     h = hash(c.op, h)
     _hash(c.args[1] - c.args[2], h)
 end
@@ -112,8 +114,8 @@ struct ComplementNotDefined
 end
 
 complement(c::Conditional) = ComplementNotDefined()
-complement(c::Conditional{typeof(<=), 2}) = Conditional(<=, c.args[2], c.args[1])
-complement(c::Conditional{typeof(>=), 2}) = Conditional(<=, c.args[1], c.args[2])
+complement(c::Conditional{typeof(<=), <:Narg{2}}) = Conditional(<=, c.args[2], c.args[1])
+complement(c::Conditional{typeof(>=), <:Narg{2}}) = Conditional(<=, c.args[1], c.args[2])
 (!)(c::Conditional) = complement(c)
 
 Base.@pure isjump(x) = false
@@ -248,7 +250,7 @@ function implies!(m::Model, imp::Implication)
 end
 
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), 2})
+function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:Narg{2}})
     lhs, rhs = c.args
     g = lhs .- rhs
     M = upperbound.(g)
@@ -260,7 +262,7 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), 2}
     end
 end 
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), 2})
+function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:Narg{2}})
     lhs, rhs = c.args
     g = lhs .- rhs
     M_u = upperbound.(g)
@@ -349,7 +351,7 @@ function _unfix(s::JuMP.GenericAffExpr)
     setupperbound(s.vars[1], 1)
 end
 
-function _setvalue(m::Model, c::Conditional{typeof(==), 2})
+function _setvalue(m::Model, c::Conditional{typeof(==), <:Narg{2}})
     _setvalue(c.args[1] - c.args[2], 0)
     nothing
 end
