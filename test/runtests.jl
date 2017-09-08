@@ -397,9 +397,7 @@ end
             @test getvalue(y) ≈ [0.3, 3.3]
         end
     end
-end
 
-@testset "disjunctions" begin
     @testset "simple 1-D example" begin
         m = Model(solver=CbcSolver())
         @variable(m, -5 <= x <= 5)
@@ -449,6 +447,17 @@ end
         solve(m)
         @test getvalue(x) ≈ 0.25
     end
+
+    @testset "disjunction with overlapping regions" begin
+        m = Model(solver=CbcSolver())
+        @variable m -2 <= x[1:2] <= 2
+        @disjunction(m, x[2] >= 0.5, x[2] <= -0.5, x[1] <= 1)
+        @constraint m x[1] == 0.8
+        @constraint m x[2] == 0.6
+        @test solve(m) == :Optimal
+        @test getvalue(x) ≈ [0.8, 0.6]
+    end
+
 end
 
 @testset "examples" begin
