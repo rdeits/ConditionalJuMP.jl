@@ -192,7 +192,6 @@ function getindicator!(m::IndicatorMap, c::Conditional)
         compl = !c
         if !isa(compl, ComplementNotDefined)
             m.indicators[compl] = 1 - z
-            implies!(m.model, 1 - z, compl)
         end
         return z
     end
@@ -214,6 +213,7 @@ function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
     lhs, rhs = imps[1]
     implies!(indmap.model, z, lhs)
     implies!(indmap.model, z, rhs)
+    implies!(indmap.model, 1 - z, !lhs)
 end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})

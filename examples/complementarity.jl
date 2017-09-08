@@ -118,6 +118,7 @@ v = [r.v for r in results1]
 if Pkg.installed("DrakeVisualizer") !== nothing
     @eval using DrakeVisualizer; 
     @eval using CoordinateTransformations
+    @eval using GeometryTypes
     DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window()
 
     vis = Visualizer()[:block]
