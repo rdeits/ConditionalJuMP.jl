@@ -475,4 +475,8 @@ end
     @testset "complementarity" begin
         include("../examples/complementarity.jl")
     end
+
+    @testset "polyhedra" begin
+        include("../examples/polyhedra.jl")
+    end
 end
