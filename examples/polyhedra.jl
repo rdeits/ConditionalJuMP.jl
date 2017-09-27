@@ -13,7 +13,6 @@ using Polyhedra: SimpleHRepresentation
 function ConditionalJuMP.Conditional(op::typeof(in), args::Tuple{AbstractVector, SimpleHRepresentation})
     x, P = args
     (&)([@?(P.A[i, :]' * x <= P.b[i]) for i in 1:length(P)]...)
-    # ConditionalJuMP.Conditional(&, Tuple([@?(P.A[i, :]' * x <= P.b[i]) for i in 1:length(P)]))
 end
 
 # A simple L1-norm objective we can minimize (since the Cbc 

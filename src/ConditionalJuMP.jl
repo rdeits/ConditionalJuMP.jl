@@ -262,14 +262,6 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:
     @constraint m lhs <= rhs + M * (1 - z)
 end 
 
-# function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:NTuple{2, AbstractArray})
-#     lhs, rhs = c.args
-#     g = lhs .- rhs
-#     M = upperbound.(g)
-#     @assert all(isfinite(M))
-#     @constraint m lhs .<= rhs .+ M .* (1 .- z)
-# end 
-
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:Narg{2}})
     lhs, rhs = c.args
     g = lhs - rhs
@@ -280,17 +272,6 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:
     @constraint(m, lhs - rhs <= M_u * (1 - z))
     @constraint(m, lhs - rhs >= M_l * (1 - z))
 end 
-
-# function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:NTuple{2, AbstractArray}})
-#     lhs, rhs = c.args
-#     g = lhs .- rhs
-#     M_u = upperbound.(g)
-#     @assert all(isfinite, M_u)
-#     M_l = lowerbound.(g)
-#     @assert all(isfinite, M_l)
-#     @constraint(m, lhs .- rhs .<= M_u .* (1 .- z))
-#     @constraint(m, lhs .- rhs .>= M_l .* (1 .- z))
-# end 
 
 implies!(::Model, ::AbstractJuMPScalar, ::Void) = nothing
 implies!(::Model, ::AbstractJuMPScalar, ::ComplementNotDefined) = nothing
