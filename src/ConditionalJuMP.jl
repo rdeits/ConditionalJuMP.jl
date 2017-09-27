@@ -218,8 +218,8 @@ end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
     z = getindicator!(indmap, first(imps[1]))
-    zs = [z, 1 - z]
-    _addimplication!.(indmap, zs, imps)
+    _addimplication!(indmap, z, imps[1])
+    _addimplication!(indmap, 1 - z, imps[2])
     push!(indmap.disjunctions, Implication[imps...])
 end
 
