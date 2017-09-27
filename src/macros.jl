@@ -1,14 +1,13 @@
-_conditionalize_recursive!(x) = esc(x)
+_conditionalize(ex) = esc(ex)
 
-function _conditionalize_recursive!(ex::Expr)
+function _conditionalize(ex::Expr)
     if ex.head == :call 
-        for i in 2:length(ex.args)
-            ex.args[i] = _conditionalize_recursive!(ex.args[i])
-        end
-        if !(ex.args[1] ∈ (:(=>),))
-            Expr(:call, :_conditional, esc(ex.args[1]), ex.args[2:end]...)
+        if ex.args[1] == GlobalRef(Base, :broadcast)
+            Expr(:call, :_all_conditional, Expr(:call, GlobalRef(Base, :broadcast), :_conditional, esc.(ex.args[2:end])...))
+        elseif ex.args[1] == :(=>)
+            Expr(:call, :(=>), _conditionalize.(ex.args[2:end])...)
         else
-            Expr(:call, ex.args...)
+            Expr(:call, :_conditional, _conditionalize.(ex.args)...)
         end
     else
         esc(ex)
@@ -16,21 +15,22 @@ function _conditionalize_recursive!(ex::Expr)
 end
 
 macro ?(ex)
-    _conditionalize_recursive!(ex)
+    _conditionalize(expand(ex))
 end
 
+
 macro implies(m, args...)
-    Expr(:call, :implies!, esc(m), _conditionalize_recursive!.(args)...)
+    Expr(:call, :implies!, esc(m), _conditionalize.(expand.(args))...)
 end
 
 macro disjunction(m, args...)
-    Expr(:call, :disjunction!, esc(m), Expr(:tuple, _conditionalize_recursive!.(args)...))
+    Expr(:call, :disjunction!, esc(m), Expr(:tuple, _conditionalize.(expand.(args))...))
 end
 
 macro switch(args...)
-    Expr(:call, :switch, _conditionalize_recursive!.(args)...)
+    Expr(:call, :switch, _conditionalize.(expand.(args))...)
 end
 
 macro ifelse(c, v1, v2)
-    Expr(:call, :ifelse, _conditionalize_recursive!(c), v1, v2)
+    Expr(:call, :ifelse, _conditionalize(expand(c)), v1, v2)
 end
