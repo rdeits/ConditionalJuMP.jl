@@ -258,7 +258,9 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:
     lhs, rhs = c.args
     g = lhs - rhs
     M = upperbound(g)
-    @assert all(isfinite(M))
+    if !all(isfinite(M))
+        error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
+    end
     @constraint m lhs <= rhs + M * (1 - z)
 end 
 
@@ -266,9 +268,10 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:
     lhs, rhs = c.args
     g = lhs - rhs
     M_u = upperbound(g)
-    @assert all(isfinite, M_u)
     M_l = lowerbound(g)
-    @assert all(isfinite, M_l)
+    if !all(isfinite(M_u)) || !all(isfinite(M_l))
+        error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
+    end
     @constraint(m, lhs - rhs <= M_u * (1 - z))
     @constraint(m, lhs - rhs >= M_l * (1 - z))
 end 
