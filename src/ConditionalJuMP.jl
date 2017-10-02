@@ -247,7 +247,7 @@ end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
     z = getindicator!(indmap, first(imps[1]))
-    _addimplication!(indmap, z, imps[1])
+    implies!(indmap.model, z, second(imps[1]))
     _addimplication!(indmap, 1 - z, imps[2])
     push!(indmap.disjunctions, Implication[imps...])
 end
