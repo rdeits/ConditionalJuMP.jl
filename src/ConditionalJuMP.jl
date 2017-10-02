@@ -190,13 +190,13 @@ end
 getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
 
 function newcontinuousvar(m::IndicatorMap)
-    var = @variable(m.model, basename="α_{$(m.α_idx[])}")
+    var = @variable(m.model, basename="α_{anon$(m.α_idx[])}")
     m.α_idx[] = m.α_idx[] + 1
     var
 end
 
-function newcontinuousvar(m::IndicatorMap, length::Integer)
-    var = @variable(m.model, [1:length], basename="{α_$(m.α_idx[])}")
+function newcontinuousvar(m::IndicatorMap, size::Dims)
+    var = reshape(@variable(m.model, [1:prod(size)], basename="{α_{anon$(m.α_idx[])}}"), size)
     m.α_idx[] = m.α_idx[] + 1
     var
 end
@@ -204,7 +204,7 @@ end
 newcontinuousvar(m::Model, args...) = newcontinuousvar(getindmap!(m), args...)
 
 function newbinaryvar(m::IndicatorMap)
-    var = @variable(m.model, basename="β_$(m.β_idx[])")
+    var = @variable(m.model, basename="β_{anon$(m.β_idx[])}", category=:Bin)
     m.β_idx[] = m.β_idx[] + 1
     var
 end
@@ -216,9 +216,7 @@ function getindicator!(m::IndicatorMap, c::Conditional)
         return m.indicators[c]
     else
         z = newbinaryvar(m)
-        # z = @variable(m.model, category=:Bin, basename="z_$(m.idx[])")
         implies!(m.model, z, c)
-        # m.idx[] = m.idx[] + 1
         m.indicators[c] = z
 
         compl = !c
@@ -322,8 +320,7 @@ function switch!(m::Model, args::Pair{<:Conditional}...)
 end
 
 function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
-    # y = reshape(@variable(m, y[1:length(args[1].second)], basename="y"), size(args[1].second))
-    y = reshape(newcontinuousvar(m, length(args[1].second)), size(args[1].second))
+    y = newcontinuousvar(m, size(args[1].second))
     conditions = first.(args)
     values = second.(args)
     for I in eachindex(y)
@@ -338,7 +335,6 @@ end
 function Base.ifelse(c::Conditional, v1, v2)
     @assert size(v1) == size(v2)
     m = getmodel(c)
-    # y = @variable(m, y, basename="y")
     y = newcontinuousvar(m)
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
@@ -349,8 +345,7 @@ end
 function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     @assert size(v1) == size(v2)
     m = getmodel(c)
-    y = reshape(newcontinuousvar(m, length(v1)), size(v1))
-    # y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
+    y = newcontinuousvar(m, size(v1))
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
     @disjunction(m, (c => y .== v1), (!c => (y .== v2)))
