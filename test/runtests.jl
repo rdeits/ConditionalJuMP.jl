@@ -85,7 +85,7 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y[1:2] <= 5
-        @implies m x ≤ 0 => y == [3, 3.5]
+        @implies m x ≤ 0 => y .== [3, 3.5]
         @objective m Min x
         @test sum(m.colCat .== :Bin) == 1
         solve(m)
@@ -97,7 +97,7 @@ end
         m = Model(solver=CbcSolver())
         @variable m -5 <= x <= 5
         @variable m -5 <= y[1:2] <= 5
-        @implies m x ≥ 0 => y == [1, -1]
+        @implies m x ≥ 0 => y .== [1, -1]
         @objective m Max x
         @test sum(m.colCat .== :Bin) == 1
         solve(m)
