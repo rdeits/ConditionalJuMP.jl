@@ -164,12 +164,14 @@ struct IndicatorMap
     model::Model
     indicators::Dict{Conditional, AbstractJuMPScalar}
     disjunctions::Vector{Vector{Implication}}
-    idx::Base.RefValue{Int}
+    α_idx::Base.RefValue{Int}
+    β_idx::Base.RefValue{Int}
 end
 
 IndicatorMap(m::Model) = IndicatorMap(m, 
     Dict{Conditional, Variable}(), 
     Vector{Vector{Implication}}(),
+    Ref(1),
     Ref(1))
 
 struct UnhandledComplementException <: Exception
@@ -180,13 +182,38 @@ function Base.showerror(io::IO, e::UnhandledComplementException)
     print(io, "The complement of condition $(e.c) cannot be automatically determined. You will need to manually specify a disjunction covering this condition and all of its alternatives")
 end
 
+getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
+
+function newcontinuousvar(m::IndicatorMap)
+    var = @variable(m.model, basename="α_{$(m.α_idx[])}")
+    m.α_idx[] = m.α_idx[] + 1
+    var
+end
+
+function newcontinuousvar(m::IndicatorMap, length::Integer)
+    var = @variable(m.model, [1:length], basename="{α_$(m.α_idx[])}")
+    m.α_idx[] = m.α_idx[] + 1
+    var
+end
+
+newcontinuousvar(m::Model, args...) = newcontinuousvar(getindmap!(m), args...)
+
+function newbinaryvar(m::IndicatorMap)
+    var = @variable(m.model, basename="β_$(m.β_idx[])")
+    m.β_idx[] = m.β_idx[] + 1
+    var
+end
+
+newbinaryvar(m::Model, args...) = newbinaryvar(getindmap!(m), args...)
+
 function getindicator!(m::IndicatorMap, c::Conditional)
     if haskey(m.indicators, c)
         return m.indicators[c]
     else
-        z = @variable(m.model, category=:Bin, basename="z_$(m.idx[])")
+        z = newbinaryvar(m)
+        # z = @variable(m.model, category=:Bin, basename="z_$(m.idx[])")
         implies!(m.model, z, c)
-        m.idx[] = m.idx[] + 1
+        # m.idx[] = m.idx[] + 1
         m.indicators[c] = z
 
         compl = !c
@@ -197,7 +224,6 @@ function getindicator!(m::IndicatorMap, c::Conditional)
     end
 end
 
-getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
 
 getindicator!(m::Model, c::Conditional) = getindicator!(getindmap!(m), c)
 
@@ -208,7 +234,7 @@ function _addimplication!(indmap::IndicatorMap, z::AbstractJuMPScalar, imp::Impl
 end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
-    z = @variable(indmap.model, basename="z")
+    z = newbinaryvar(indmap)
     JuMP.fix(z, 1)
     lhs, rhs = imps[1]
     implies!(indmap.model, z, lhs)
@@ -291,7 +317,7 @@ function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(&)})
 end
 
 function switch!(m::Model, args::Pair{<:Conditional}...)
-    y = @variable(m, y, basename="y")
+    y = newcontinuousvar(m)
     conditions = first.(args)
     values = second.(args)
     setlowerbound(y, minimum(lowerbound, values))
@@ -301,7 +327,8 @@ function switch!(m::Model, args::Pair{<:Conditional}...)
 end
 
 function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
-    y = reshape(@variable(m, y[1:length(args[1].second)], basename="y"), size(args[1].second))
+    # y = reshape(@variable(m, y[1:length(args[1].second)], basename="y"), size(args[1].second))
+    y = reshape(newcontinuousvar(m, length(args[1].second)), size(args[1].second))
     conditions = first.(args)
     values = second.(args)
     for I in eachindex(y)
@@ -316,7 +343,8 @@ end
 function Base.ifelse(c::Conditional, v1, v2)
     @assert size(v1) == size(v2)
     m = getmodel(c)
-    y = @variable(m, y, basename="y")
+    # y = @variable(m, y, basename="y")
+    y = newcontinuousvar(m)
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
     disjunction!(m, (c => @?(y == v1), !c => @?(y == v2)))
@@ -326,7 +354,8 @@ end
 function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     @assert size(v1) == size(v2)
     m = getmodel(c)
-    y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
+    y = reshape(newcontinuousvar(m, length(v1)), size(v1))
+    # y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
     disjunction!(m, (c => @?(y == v1), !c => @?(y == v2)))
