@@ -230,12 +230,6 @@ end
 
 getindicator!(m::Model, c::Conditional) = getindicator!(getindmap!(m), c)
 
-function _addimplication!(indmap::IndicatorMap, z::AbstractJuMPScalar, imp::Implication)
-    c1, c2 = imp
-    implies!(indmap.model, z, c1)
-    implies!(indmap.model, z, c2)
-end
-
 function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
     z = newbinaryvar(indmap)
     JuMP.fix(z, 1)
@@ -247,14 +241,15 @@ end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
     z = getindicator!(indmap, first(imps[1]))
-    _addimplication!(indmap, z, imps[1])
-    _addimplication!(indmap, 1 - z, imps[2])
+    implies!(indmap.model, z, second(imps[1]))
+    implies!(indmap.model, 1 - z, first(imps[2]))
+    implies!(indmap.model, 1 - z, second(imps[2]))
     push!(indmap.disjunctions, Implication[imps...])
 end
 
 function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     zs = getindicator!.(indmap, first.(imps))
-    _addimplication!.(indmap, zs, imps)
+    implies!.(indmap.model, zs, second.(imps))
     @constraint(indmap.model, sum(zs) == 1)
     push!(indmap.disjunctions, Implication[imps...])
 end
