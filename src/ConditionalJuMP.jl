@@ -169,8 +169,8 @@ struct IndicatorMap
     model::Model
     indicators::Dict{Conditional, AbstractJuMPScalar}
     disjunctions::Vector{Vector{Implication}}
-    α_idx::Base.RefValue{Int}
-    β_idx::Base.RefValue{Int}
+    y_idx::Base.RefValue{Int}
+    z_idx::Base.RefValue{Int}
 end
 
 IndicatorMap(m::Model) = IndicatorMap(m, 
@@ -190,22 +190,22 @@ end
 getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
 
 function newcontinuousvar(m::IndicatorMap)
-    var = @variable(m.model, basename="α_{anon$(m.α_idx[])}")
-    m.α_idx[] = m.α_idx[] + 1
+    var = @variable(m.model, basename="y_{anon$(m.y_idx[])}")
+    m.y_idx[] = m.y_idx[] + 1
     var
 end
 
 function newcontinuousvar(m::IndicatorMap, size::Dims)
-    var = reshape(@variable(m.model, [1:prod(size)], basename="{α_{anon$(m.α_idx[])}}"), size)
-    m.α_idx[] = m.α_idx[] + 1
+    var = reshape(@variable(m.model, [1:prod(size)], basename="{y_{anon$(m.y_idx[])}}"), size)
+    m.y_idx[] = m.y_idx[] + 1
     var
 end
 
 newcontinuousvar(m::Model, args...) = newcontinuousvar(getindmap!(m), args...)
 
 function newbinaryvar(m::IndicatorMap)
-    var = @variable(m.model, basename="β_{anon$(m.β_idx[])}", category=:Bin)
-    m.β_idx[] = m.β_idx[] + 1
+    var = @variable(m.model, basename="z_{anon$(m.z_idx[])}", category=:Bin)
+    m.z_idx[] = m.z_idx[] + 1
     var
 end
 
