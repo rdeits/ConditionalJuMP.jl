@@ -47,15 +47,15 @@ function _setvalue(s::JuMP.GenericAffExpr, x)
     _setvalue(s.vars[1], (x - s.constant) / s.coeffs[1])
 end
 
-struct Conditional{Op, Args<:Tuple}
+struct Conditional{Op, Args <: Tuple}
     op::Op
     args::Args
-end
 
-function Conditional(op::Op, args...) where {Op}
-    canonical_op, canonical_args = canonicalize(op, args)
-    Conditional{typeof(canonical_op), typeof(canonical_args)}(
-        canonical_op, canonical_args)
+    function Conditional(op, args) where {}
+        canonical_op, canonical_args = canonicalize(op, args)
+        new{typeof(canonical_op), typeof(canonical_args)}(
+            canonical_op, canonical_args)
+    end
 end
 
 function getmodel(c::Conditional)
@@ -67,8 +67,8 @@ function getmodel(c::Conditional)
     error("Could not find JuMP Model in conditional $c")
 end
 
-Conditional(::typeof(>=), x, y) = Conditional(<=, -x, -y)
-(&)(c1::Conditional, c2::Conditional) = Conditional(&, c1, c2)
+Conditional(::typeof(>=), x, y) = Conditional(<=, (-x, -y))
+(&)(c1::Conditional, cs::Conditional...) = Conditional(&, (c1, cs...))
 
 Narg{N} = Tuple{Vararg{Any, N}}
 
@@ -82,10 +82,11 @@ Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
 canonicalize(op, args) = op, args
 canonicalize(op::typeof(>=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[2] - args[1], 0))
 canonicalize(op::typeof(<=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[1] - args[2], 0))
+# canonicalize(c::Conditional) = canonicalize(c.op, c.args)
 
 (==)(c1::Conditional{op}, c2::Conditional{op}) where {op} = c1.args == c2.args
 
-Base.hash(c::Conditional{typeof(>=)}, h::UInt) = hash(canonicalize(c), h)
+# Base.hash(c::Conditional{typeof(>=)}, h::UInt) = hash(canonicalize(c), h)
 
 # work-around because JuMP doesn't properly define hash()
 function _hash(x::JuMP.GenericAffExpr, h::UInt)
@@ -114,8 +115,8 @@ struct ComplementNotDefined
 end
 
 complement(c::Conditional) = ComplementNotDefined()
-complement(c::Conditional{typeof(<=), <:Narg{2}}) = Conditional(<=, c.args[2], c.args[1])
-complement(c::Conditional{typeof(>=), <:Narg{2}}) = Conditional(<=, c.args[1], c.args[2])
+complement(c::Conditional{typeof(<=), <:Narg{2}}) = Conditional(<=, (c.args[2], c.args[1]))
+complement(c::Conditional{typeof(>=), <:Narg{2}}) = Conditional(<=, (c.args[1], c.args[2]))
 (!)(c::Conditional) = complement(c)
 
 Base.@pure isjump(x) = false
@@ -127,13 +128,17 @@ Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
 
 function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==), typeof(in)}}
     if isjump(args)
-        Conditional(op, args...)
+        Conditional(op, args)
     else
         op(args...)
     end
 end
 
 _conditional(op, args...) = op(args...)
+
+function _all_conditional(args)
+    (&)(args...)
+end
 
 lowerbound(x::Number) = x
 lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
@@ -249,36 +254,26 @@ function implies!(m::Model, imp::Implication)
     disjunction!(m, (imp, (comp1 => nothing)))
 end
 
-
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:Narg{2}})
     lhs, rhs = c.args
-    g = lhs .- rhs
-    M = upperbound.(g)
+    g = lhs - rhs
+    M = upperbound(g)
     if !all(isfinite(M))
         error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
     end
-    if isa(g, AbstractArray)
-        @constraint m lhs .<= rhs .+ M .* (1 .- z)
-    else
-        @constraint m lhs <= rhs + M * (1 - z)
-    end
+    @constraint m lhs <= rhs + M * (1 - z)
 end 
 
 function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:Narg{2}})
     lhs, rhs = c.args
-    g = lhs .- rhs
-    M_u = upperbound.(g)
-    M_l = lowerbound.(g)
+    g = lhs - rhs
+    M_u = upperbound(g)
+    M_l = lowerbound(g)
     if !all(isfinite(M_u)) || !all(isfinite(M_l))
         error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
     end
-    if isa(g, AbstractArray)
-        @constraint(m, lhs .- rhs .<= M_u .* (1 .- z))
-        @constraint(m, lhs .- rhs .>= M_l .* (1 .- z))
-    else
-        @constraint(m, lhs - rhs <= M_u * (1 - z))
-        @constraint(m, lhs - rhs >= M_l * (1 - z))
-    end
+    @constraint(m, lhs - rhs <= M_u * (1 - z))
+    @constraint(m, lhs - rhs >= M_l * (1 - z))
 end 
 
 implies!(::Model, ::AbstractJuMPScalar, ::Void) = nothing
@@ -308,7 +303,7 @@ function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
         setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
         setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
     end
-    disjunction!(m, map(cv -> (cv[1] => @?(y == cv[2])), args))
+    disjunction!(m, map(cv -> (cv[1] => @?(y .== cv[2])), args))
     y
 end
 
@@ -329,7 +324,8 @@ function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     y = reshape(@variable(m, y[1:length(v1)], basename="y"), size(v1))
     setlowerbound.(y, min.(lowerbound.(v1), lowerbound.(v2)))
     setupperbound.(y, max.(upperbound.(v1), upperbound.(v2)))
-    disjunction!(m, (c => @?(y == v1), !c => @?(y == v2)))
+    @disjunction(m, (c => y .== v1), (!c => (y .== v2)))
+    # disjunction!(m, (c => @?(y .== v1), !c => @?(y .== v2)))
     y
 end
 
