@@ -458,6 +458,21 @@ end
         @test getvalue(x) ≈ [0.8, 0.6]
     end
 
+    @testset "test that warmstart does not introduce new variables" begin
+        m = Model(solver=CbcSolver())
+        @variable m -1 <= x <= 1
+        @disjunction m (x == 0.5) (x == -0.5)
+        @objective m Min x
+        @test length(m.colCat) == 2
+        warmstart!(m, false)
+        @test length(m.colCat) == 2
+        solve(m)
+        @test getvalue(x) ≈ -0.5
+        warmstart!(m, true)
+        @test length(m.colCat) == 2
+        solve(m)
+        @test getvalue(x) ≈ -0.5
+    end
 end
 
 @testset "examples" begin
