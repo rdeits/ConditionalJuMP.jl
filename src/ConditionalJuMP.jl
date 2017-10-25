@@ -5,6 +5,7 @@ module ConditionalJuMP
 using JuMP
 using JuMP: AbstractJuMPScalar
 using IntervalArithmetic: Interval
+using Interfaces
 import Base: <=, ==, >=, !, &
 
 export @disjunction,
@@ -19,6 +20,7 @@ export @disjunction,
 include("macros.jl")
 
 const JExpr = JuMP.GenericAffExpr{Float64, Variable}
+const Narg{N} = Tuple{Vararg{Any, N}}
 
 getmodel(x::JuMP.Variable) = x.m
 getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
@@ -47,6 +49,10 @@ function _setvalue(s::JuMP.GenericAffExpr, x)
     _setvalue(s.vars[1], (x - s.constant) / s.coeffs[1])
 end
 
+canonicalize(op, args) = op, args
+canonicalize(op::typeof(>=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[2] - args[1], 0))
+canonicalize(op::typeof(<=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[1] - args[2], 0))
+
 struct Conditional{Op, Args <: Tuple}
     op::Op
     args::Args
@@ -57,6 +63,13 @@ struct Conditional{Op, Args <: Tuple}
             canonical_op, canonical_args)
     end
 end
+
+_getvalue(c::Conditional{typeof(<=), <:Narg{2}}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
+_getvalue(c::Conditional{typeof(>=), <:Narg{2}}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
+_getvalue(c::Conditional{typeof(==), <:Narg{2}}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
+_getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
+
+Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
 
 function getmodel(c::Conditional)
     for arg in c.args
@@ -70,23 +83,7 @@ end
 Conditional(::typeof(>=), x, y) = Conditional(<=, (-x, -y))
 (&)(c1::Conditional, cs::Conditional...) = Conditional(&, (c1, cs...))
 
-Narg{N} = Tuple{Vararg{Any, N}}
-
-_getvalue(c::Conditional{typeof(<=), <:Narg{2}}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
-_getvalue(c::Conditional{typeof(>=), <:Narg{2}}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
-_getvalue(c::Conditional{typeof(==), <:Narg{2}}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
-_getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
-
-Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
-
-canonicalize(op, args) = op, args
-canonicalize(op::typeof(>=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[2] - args[1], 0))
-canonicalize(op::typeof(<=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[1] - args[2], 0))
-# canonicalize(c::Conditional) = canonicalize(c.op, c.args)
-
 (==)(c1::Conditional{op}, c2::Conditional{op}) where {op} = c1.args == c2.args
-
-# Base.hash(c::Conditional{typeof(>=)}, h::UInt) = hash(canonicalize(c), h)
 
 # work-around because JuMP doesn't properly define hash()
 function _hash(x::JuMP.GenericAffExpr, h::UInt)
@@ -104,6 +101,13 @@ function Base.hash(c::Union{<:Conditional{typeof(<=), <:Narg{2}}, <:Conditional{
     h = hash(c.op, h)
     _hash(c.args[1] - c.args[2], h)
 end
+
+@interface ConditionalIfc(self::Conditional) begin
+    getmodel()::Model = getmodel(self)
+    getviolation()::Nullable{Float64} = _getvalue(self)
+    _hash()::UInt = hash(self)
+end
+
 
 const Implication{C1, C2} = Pair{C1, C2} where {C1 <: Conditional, C2 <: Union{Conditional, Void}}
 
