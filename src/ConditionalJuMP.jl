@@ -141,28 +141,33 @@ function _all_conditional(args)
 end
 
 lowerbound(x::Number) = x
-lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
 upperbound(x::Number) = x
+lowerbound(x::Variable) = JuMP.getlowerbound(x)
 upperbound(x::Variable) = JuMP.getupperbound(x)
+lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
 
 function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
     coeffs = Dict{Variable, T}()
     for i in eachindex(e.vars)
         v, c = e.vars[i], e.coeffs[i]
-        coeffs[v] = get(coeffs, v, zero(T)) + c
+        if c != 0
+            coeffs[v] = get(coeffs, v, zero(T)) + c
+        end
     end
-    AffExpr(collect(keys(coeffs)), collect(values(coeffs)), e.constant)
+    coeffs
 end
 
 function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
-    e2 = simplify(e)
-    intervals = [Interval(getlowerbound(v), getupperbound(v)) for v in e2.vars]
-    if isempty(intervals)
-        ex_bounds = Interval(e2.constant, e2.constant)
+    coeffs = simplify(e)
+    if isempty(coeffs)
+        return e.constant
     else
-        ex_bounds = e2.coeffs' * intervals + e2.constant
+        result = Interval(e.constant, e.constant)
+        for (var, coef) in coeffs
+            result += Interval(coef, coef) * Interval(getlowerbound(var), getupperbound(var))
+        end
+        return result.hi
     end
-    ex_bounds.hi
 end
 
 struct IndicatorMap
@@ -388,7 +393,7 @@ function warmstart!(m::Model, fix=false)
     while true
         modified = false
         for implications in indmap.disjunctions
-            violations = _getvalue.(first.(implications))
+            violations = Nullable{Float64}[_getvalue(first(i)) for i in implications]
             if !any(isnull, violations)
                 best_match = indmin(get.(violations))
                 for i in eachindex(violations)
