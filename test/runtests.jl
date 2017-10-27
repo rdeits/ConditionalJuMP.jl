@@ -1,24 +1,22 @@
 using ConditionalJuMP
-using ConditionalJuMP: switch!
+using ConditionalJuMP: switch!,  _getvalue, UnhandledComplementException, hascomplement, getindicator!, disjunction!, isjump, Conditional
 using JuMP
 using Cbc
 using Base.Test
 
 # Macro hygiene
 module MacroHygieneTest
+    using ConditionalJuMP
+    using Base.Test
 
-using Base.Test
-using ConditionalJuMP
+    function f(x)
+        x + 1
+    end
 
-function f(x)
-    x + 1
-end
-
-@testset "macro hygiene" begin
-    x = 5
-    @test @?(f(x) <= 0) == false
-end
-
+    @testset "macro hygiene" begin
+        x = 5
+        @test @?(f(x) <= 0) == false
+    end
 end
 
 @testset "bounds" begin
@@ -31,6 +29,93 @@ end
     @test lowerbound(e - 2x) == 1
     @test lowerbound(AffExpr(2)) == 2
     @test upperbound(AffExpr(2)) == 2
+end
+
+@testset "simple model" begin
+    m = Model()
+    @variable m -1 <= x <= 10
+    c1 = @?(x <= 0)
+    c2 = @?(x >= 0)
+    c3 = @?(x + 5 <= 5)
+    c4 = @?(x + 1 == 10)
+    
+    display(c1)
+    display(c2)
+    display(c1 & c2)
+
+    @testset "equality" begin
+        @test c1 != c2
+        @test c2 != c3
+        @test c1 == c3
+        @test c1 !== c3
+    end
+
+    @testset "intersect" begin
+        @test (c1 & c3) == c1
+        @test length(c1 & c2) == 2
+    end
+
+    @testset "complement" begin
+        @test !c1 == c2
+        @test !c2 == c1
+        @test !hascomplement(c4)
+        @test_throws UnhandledComplementException !c4
+    end
+
+    @testset "hashing" begin
+        @test hash(c1) == hash(c3)
+        @test hash(c1) != hash(c2)
+    end
+
+    @testset "value" begin
+        @test isnull(_getvalue(c1))
+        @test isnull(_getvalue(c2))
+        setvalue(x, -0.1)
+        @test get(_getvalue(c1)) == -0.1
+        @test get(_getvalue(c2)) == 0.1
+    end
+
+    @testset "bounds" begin
+        @test lowerbound(x) == -1
+        @test upperbound(x) == 10
+        @test lowerbound(x + 1) == 0
+        @test upperbound(x + 10) == 20
+    end
+
+    @testset "indicators" begin
+        z1 = getindicator!(m, c1)
+        z2 = getindicator!(m, c2)
+        z3 = getindicator!(m, c3)
+        @test z1 === z3
+        @test z1 == 1 - z2
+    end
+
+    @testset "isjump" begin
+        @test isjump(x)
+        @test !isjump(1)
+        @test isjump(2x)
+        @test isjump(c1)
+        @test isjump(c1 & c2)
+        @test isjump(c1 => c2)
+        @test isjump(c1 => Conditional())
+    end
+end
+
+@testset "disjunction" begin
+    m = Model(solver=CbcSolver())
+    @variable m -5 <= x <= 5
+    c1 = @?(x >= -4) & @?(x <= -2)
+    c2 = @?(x >= 1) & @?(x <= 3)
+    @objective m Min x
+    disjunction!(m, (c1, c2))
+    solve(m)
+    @test getvalue(x) ≈ -4
+    @objective m Max x
+    solve(m)
+    @test getvalue(x) ≈ 3
+    @constraint m x <= 0
+    solve(m)
+    @test getvalue(x) ≈ -2
 end
 
 @testset "implies" begin

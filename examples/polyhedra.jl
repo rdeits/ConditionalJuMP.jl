@@ -10,8 +10,7 @@ using Polyhedra: SimpleHRepresentation
 # This implementation lets us add disjunctions and implications of the form
 #   x in P
 # where x is a vector and P is a Polyhedron
-function ConditionalJuMP.Conditional(op::typeof(in), args::Tuple{AbstractVector, SimpleHRepresentation})
-    x, P = args
+function ConditionalJuMP.Conditional(op::typeof(in), x::AbstractVector, P::SimpleHRepresentation)
     (&)([@?(P.A[i, :]' * x <= P.b[i]) for i in 1:length(P)]...)
 end
 
