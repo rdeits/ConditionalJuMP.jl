@@ -80,11 +80,12 @@ end
 
 (==)(e1::Constraint, e2::Constraint) = (e1.c.lb == e2.c.lb) && (e1.c.ub == e2.c.ub) && (e1.c.terms == e2.c.terms)
 
-# struct Conditional
-#     constraints::Set{Constraint{Float64}}
-# end
+show(io::IO, h::Constraint) = print(io, h.c)
 
 const Conditional = Set{Constraint{Float64}}
+
+
+show(io::IO, c::Conditional) = print(io, join(c, " & "))
 
 Conditional(::typeof(<=), x, y) = Conditional(Set([Constraint(x - y, -Inf, 0)]))
 Conditional(::typeof(>=), x, y) = Conditional(Set([Constraint(y - x, -Inf, 0)]))
@@ -286,12 +287,6 @@ function implies!(m::Model, imp::Implication)
     disjunction!(m, (imp, (comp1 => Conditional(Set()))))
 end
 
-
-# show(io::IO, h::HashableAffExpr) = print(io, h.expr)
-
-# function show(io::IO, c::Conditional)
-#     print(io, join(["($arg <= 0)" for arg in c.args], " & "))
-# end
 
 end
     
