@@ -18,8 +18,6 @@ export @disjunction,
 
 include("macros.jl")
 
-const JExpr = JuMP.GenericAffExpr{Float64, Variable}
-
 getmodel(x::JuMP.Variable) = x.m
 getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
 getmodel(x) = nothing
