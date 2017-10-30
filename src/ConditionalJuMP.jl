@@ -20,6 +20,40 @@ include("macros.jl")
 
 const NArg{N} = NTuple{N, Any}
 
+"""
+Naive O(N^2) simplification. Slower for very large expressions, but allocates
+no memory and is solidly faster for expressions with < 100 variables. 
+"""
+function simplify!(e::JuMP.GenericAffExpr{T, Variable}) where T
+    i1 = 1
+    iend = length(e.vars)
+    while i1 < iend
+        i2 = i1 + 1
+        while i2 <= iend
+            if e.vars[i1].col == e.vars[i2].col
+                e.coeffs[i1] += e.coeffs[i2]
+                e.vars[i2] = e.vars[iend]
+                e.coeffs[i2] = e.coeffs[iend]
+                iend -= 1
+            else
+                i2 += 1
+            end
+        end
+        i1 += 1
+    end
+    resize!(e.vars, iend)
+    resize!(e.coeffs, iend)
+    if iszero(e.constant)
+        # Ensure that we always use the canonical (e.g. positive) zero
+        e.constant = zero(e.constant)
+    end
+    e
+end
+
+"""
+O(N) simplification, but with a substantially larger constant cost due to the
+need to construct a Dict. 
+"""
 function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
     vars = Variable[]
     coeffs = T[]
@@ -45,31 +79,34 @@ function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
     AffExpr(vars, coeffs, constant)
 end
 
-function normalize(c::GenericRangeConstraint)
+function normalize!(c::GenericRangeConstraint)
     @assert c.ub != Inf || c.lb != -Inf "Can't construct a constraint with infinite lower and upper bounds"
 
-    terms = c.terms
-    lb = c.lb
-    ub = c.ub
-    if ub == Inf
+    # terms = c.terms
+    # lb = c.lb
+    # ub = c.ub
+    if c.ub == Inf
         # then flip the constraint over so its upper bound is finite
-        lb, ub = -ub, -lb
-        terms = -terms
+        c.lb, c.ub = -c.ub, -c.lb
+        c.terms.coeffs .*= -1
+        c.terms.constant *= -1
+        # terms = -terms
     end
-    if ub != 0
-        x = ub
-        ub = 0
-        terms -= x
-        lb -= x
+    if c.ub != 0
+        x = c.ub
+        c.ub = 0
+        c.terms.constant -= x
+        c.lb -= x
     end
-    if iszero(lb)
+    if iszero(c.lb)
         # Ensure that we don't have negative zeros so that hashing is reliable
-        lb = zero(lb)
+        c.lb = zero(c.lb)
     end
-    if iszero(ub)
-        ub = zero(ub)
+    if iszero(c.ub)
+        c.ub = zero(c.ub)
     end
-    GenericRangeConstraint(simplify(terms), lb, ub)
+    simplify!(c.terms)
+    c
 end
 
 
@@ -77,7 +114,8 @@ struct Constraint{T}
     c::GenericRangeConstraint{GenericAffExpr{T, Variable}}
     hash::UInt
     function Constraint{T}(c::GenericAffExpr{T}, lb, ub) where T
-        constraint = normalize(GenericRangeConstraint{GenericAffExpr{T, Variable}}(c, lb, ub))
+        constraint = GenericRangeConstraint{GenericAffExpr{T, Variable}}(copy(c), lb, ub)
+        normalize!(constraint)
         h = _hash(constraint, UInt(0))
         new(constraint, h)
     end
@@ -149,7 +187,7 @@ upperbound(x::Variable) = JuMP.getupperbound(x)
 
 function interval(e::JuMP.GenericAffExpr, needs_simplification=true)
     if needs_simplification
-        e = simplify(e)
+        simplify!(e)
     end
     if isempty(e.coeffs)
         return Interval(e.constant, e.constant)
