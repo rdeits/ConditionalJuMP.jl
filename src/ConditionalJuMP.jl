@@ -3,9 +3,9 @@ __precompile__()
 module ConditionalJuMP
 
 using JuMP
-using JuMP: AbstractJuMPScalar
+using JuMP: GenericAffExpr, GenericRangeConstraint, Variable, AbstractJuMPScalar
 using IntervalArithmetic: Interval
-import Base: <=, ==, >=, !, &
+import Base: <=, ==, >=, !, &, hash, show
 
 export @disjunction,
     @implies,
@@ -18,133 +18,7 @@ export @disjunction,
 
 include("macros.jl")
 
-const JExpr = JuMP.GenericAffExpr{Float64, Variable}
-
-getmodel(x::JuMP.Variable) = x.m
-getmodel(x::JuMP.GenericAffExpr) = x.vars[1].m
-getmodel(x) = nothing
-
-nan_to_null(x) = isnan(x) ? Nullable{typeof(x)}() : Nullable{typeof(x)}(x)
-
-"""
-Like JuMP.getvalue, but returns a Nullable{T}() for unset variables instead
-of throwing a warning
-"""
-function _getvalue(x::JuMP.GenericAffExpr{T, Variable}) where {T}
-    result::Nullable{T} = x.constant
-    for i in eachindex(x.coeffs)
-        result = result .+ x.coeffs[i] .* _getvalue(x.vars[i])
-    end
-    result
-end
-
-_getvalue(x::Variable) = nan_to_null(JuMP._getValue(x))
-_getvalue(x::Number) = nan_to_null(x)
-
-_setvalue(v::Variable, x) = JuMP.setvalue(v, x)
-function _setvalue(s::JuMP.GenericAffExpr, x)
-    @assert length(s.vars) == 1
-    _setvalue(s.vars[1], (x - s.constant) / s.coeffs[1])
-end
-
-struct Conditional{Op, Args <: Tuple}
-    op::Op
-    args::Args
-
-    function Conditional(op, args) where {}
-        canonical_op, canonical_args = canonicalize(op, args)
-        new{typeof(canonical_op), typeof(canonical_args)}(
-            canonical_op, canonical_args)
-    end
-end
-
-function getmodel(c::Conditional)
-    for arg in c.args
-        if getmodel(arg) != nothing
-            return getmodel(arg)
-        end
-    end
-    error("Could not find JuMP Model in conditional $c")
-end
-
-Conditional(::typeof(>=), x, y) = Conditional(<=, (-x, -y))
-(&)(c1::Conditional, cs::Conditional...) = Conditional(&, (c1, cs...))
-
-Narg{N} = Tuple{Vararg{Any, N}}
-
-_getvalue(c::Conditional{typeof(<=), <:Narg{2}}) = _getvalue(c.args[1]) .- _getvalue(c.args[2])
-_getvalue(c::Conditional{typeof(>=), <:Narg{2}}) = _getvalue(c.args[2]) .- _getvalue(c.args[1])
-_getvalue(c::Conditional{typeof(==), <:Narg{2}}) = abs.(_getvalue(c.args[1]) .- _getvalue(c.args[2]))
-_getvalue(c::Conditional{typeof(&)}) = maximum(x -> _getvalue.(x), c.args)
-
-Base.show(io::IO, c::Conditional) = print(io, c.op, c.args)
-
-canonicalize(op, args) = op, args
-canonicalize(op::typeof(>=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[2] - args[1], 0))
-canonicalize(op::typeof(<=), args::Tuple{Vararg{<:Any, 2}}) = (<=, (args[1] - args[2], 0))
-# canonicalize(c::Conditional) = canonicalize(c.op, c.args)
-
-(==)(c1::Conditional{op}, c2::Conditional{op}) where {op} = c1.args == c2.args
-
-# Base.hash(c::Conditional{typeof(>=)}, h::UInt) = hash(canonicalize(c), h)
-
-# work-around because JuMP doesn't properly define hash()
-function _hash(x::JuMP.GenericAffExpr, h::UInt)
-    h = hash(x.constant, h)
-    for v in x.vars
-        h = hash(v, h)
-    end
-    for c in x.coeffs
-        h = hash(c, h)
-    end
-    h
-end
-
-function Base.hash(c::Union{<:Conditional{typeof(<=), <:Narg{2}}, <:Conditional{typeof(==), <:Narg{2}}}, h::UInt)
-    h = hash(c.op, h)
-    _hash(c.args[1] - c.args[2], h)
-end
-
-const Implication{C1, C2} = Pair{C1, C2} where {C1 <: Conditional, C2 <: Union{Conditional, Void}}
-
-second(x::Pair) = x.second
-
-Base.show(io::IO, cv::Implication) = print(io, "(", first(cv), ") implies (", second(cv), ")")
-
-struct ComplementNotDefined
-end
-
-complement(c::Conditional) = ComplementNotDefined()
-complement(c::Conditional{typeof(<=), <:Narg{2}}) = Conditional(<=, (c.args[2], c.args[1]))
-complement(c::Conditional{typeof(>=), <:Narg{2}}) = Conditional(<=, (c.args[1], c.args[2]))
-(!)(c::Conditional) = complement(c)
-
-Base.@pure isjump(x) = false
-Base.@pure isjump(args::Tuple) = any(isjump, args)
-Base.@pure isjump(arg::Pair) = isjump(arg.first)
-Base.@pure isjump(c::Conditional) = isjump(c.args[1])
-Base.@pure isjump(x::AbstractJuMPScalar) = true
-Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
-
-function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==), typeof(in)}}
-    if isjump(args)
-        Conditional(op, args)
-    else
-        op(args...)
-    end
-end
-
-_conditional(op, args...) = op(args...)
-
-function _all_conditional(args)
-    (&)(args...)
-end
-
-lowerbound(x::Number) = x
-upperbound(x::Number) = x
-lowerbound(x::Variable) = JuMP.getlowerbound(x)
-upperbound(x::Variable) = JuMP.getupperbound(x)
-lowerbound(x::AbstractJuMPScalar) = -upperbound(-x)
+const NArg{N} = NTuple{N, Any}
 
 function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
     coeffs = Dict{Variable, T}()
@@ -154,35 +28,81 @@ function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
             coeffs[v] = get(coeffs, v, zero(T)) + c
         end
     end
-    coeffs
+    pairs = collect(coeffs)
+    constant = e.constant
+    if iszero(constant)
+        constant = zero(constant)
+    end
+    AffExpr(first.(pairs), last.(pairs), constant)
 end
 
-function upperbound(e::JuMP.GenericAffExpr{T, Variable}) where {T}
-    coeffs = simplify(e)
-    if isempty(coeffs)
-        return e.constant
-    else
-        result = Interval(e.constant, e.constant)
-        for (var, coef) in coeffs
-            result += Interval(coef, coef) * Interval(getlowerbound(var), getupperbound(var))
-        end
-        return result.hi
+function normalize(c::GenericRangeConstraint)
+    @assert c.ub != Inf || c.lb != -Inf "Can't construct a constraint with infinite lower and upper bounds"
+
+    terms = c.terms
+    lb = c.lb
+    ub = c.ub
+    if ub == Inf
+        # then flip the constraint over so its upper bound is finite
+        lb, ub = -ub, -lb
+        terms = -terms
+    end
+    if ub != 0
+        x = ub
+        ub = 0
+        terms -= x
+        lb -= x
+    end
+    if iszero(lb)
+        # Ensure that we don't have negative zeros so that hashing is reliable
+        lb = zero(lb)
+    end
+    if iszero(ub)
+        ub = zero(ub)
+    end
+    GenericRangeConstraint(simplify(terms), lb, ub)
+end
+
+
+struct Constraint{T}
+    c::GenericRangeConstraint{GenericAffExpr{T, Variable}}
+    function Constraint{T}(c::GenericAffExpr{T}, lb, ub) where T
+        new(normalize(GenericRangeConstraint{GenericAffExpr{T, Variable}}(c, lb, ub)))
     end
 end
 
-struct IndicatorMap
-    model::Model
-    indicators::Dict{Conditional, AbstractJuMPScalar}
-    disjunctions::Vector{Vector{Implication}}
-    y_idx::Base.RefValue{Int}
-    z_idx::Base.RefValue{Int}
+function Constraint(c::GenericAffExpr{T1}, lb::T2, ub::T3) where {T1, T2, T3}
+    Constraint{promote_type(T1, T2, T3)}(c, lb, ub)
 end
 
-IndicatorMap(m::Model) = IndicatorMap(m, 
-    Dict{Conditional, Variable}(), 
-    Vector{Vector{Implication}}(),
-    Ref(1),
-    Ref(1))
+# work-around because JuMP doesn't properly define hash()
+function Base.hash(x::Constraint, h::UInt)
+    h = hash(x.c.lb, h)
+    h = hash(x.c.ub, h)
+    h = hash(x.c.terms.constant, h)
+    for v in x.c.terms.vars
+        h = hash(v, h)
+    end
+    for c in x.c.terms.coeffs
+        h = hash(c, h)
+    end
+    h
+end
+
+(==)(e1::Constraint, e2::Constraint) = (e1.c.lb == e2.c.lb) && (e1.c.ub == e2.c.ub) && (e1.c.terms == e2.c.terms)
+
+show(io::IO, h::Constraint) = print(io, h.c)
+
+const Conditional = Set{Constraint{Float64}}
+
+
+show(io::IO, c::Conditional) = print(io, join(c, " & "))
+
+Conditional(::typeof(<=), x, y) = Conditional(Set([Constraint(x - y, -Inf, 0)]))
+Conditional(::typeof(>=), x, y) = Conditional(Set([Constraint(y - x, -Inf, 0)]))
+Conditional(::typeof(==), x, y) = Conditional(Set([Constraint(x - y, 0, 0)]))
+(&)(c1::Conditional, c2::Conditional) = union(c1, c2)
+Conditional() = Conditional(Set())
 
 struct UnhandledComplementException <: Exception
     c::Conditional
@@ -191,6 +111,65 @@ end
 function Base.showerror(io::IO, e::UnhandledComplementException)
     print(io, "The complement of condition $(e.c) cannot be automatically determined. You will need to manually specify a disjunction covering this condition and all of its alternatives")
 end
+
+# lb <= x <= ub
+# -> x <= lb || x >= ub
+hascomplement(c::Conditional) = (length(c) == 1) && (first(c).c.lb == -Inf || first(c).c.ub == Inf)
+function complement(c::Conditional)
+    hascomplement(c) || throw(UnhandledComplementException(c))
+    constr = first(c).c
+    if constr.lb == -Inf
+        new_constr = Constraint(constr.terms, constr.ub, Inf)
+    else
+        @assert constr.ub == Inf
+        new_constr = Constraint(constr.terms, -Inf, constr.lb)
+    end
+    Conditional([new_constr])
+end
+(!)(c::Conditional) = complement(c)
+
+lowerbound(x::Number) = x
+upperbound(x::Number) = x
+lowerbound(x::Variable) = JuMP.getlowerbound(x)
+upperbound(x::Variable) = JuMP.getupperbound(x)
+
+function interval(e::JuMP.GenericAffExpr, needs_simplification=true)
+    if needs_simplification
+        e = simplify(e)
+    end
+    if isempty(e.coeffs)
+        return Interval(e.constant, e.constant)
+    else
+        result = Interval(e.constant, e.constant)
+        for i in eachindex(e.coeffs)
+            var = e.vars[i]
+            coef = e.coeffs[i]
+            result += Interval(coef, coef) * Interval(getlowerbound(var), getupperbound(var))
+        end
+        return result
+    end
+end
+
+upperbound(e::GenericAffExpr, simplify=true) = upperbound(interval(e, simplify))
+lowerbound(e::GenericAffExpr, simplify=true) = lowerbound(interval(e, simplify))
+lowerbound(i::Interval) = i.lo
+upperbound(i::Interval) = i.hi
+
+const Implication = Pair{Conditional, Conditional}
+
+struct IndicatorMap
+    model::Model
+    indicators::Dict{Conditional, AffExpr}
+    disjunctions::Vector{Vector{Implication}}
+    y_idx::Base.RefValue{Int}
+    z_idx::Base.RefValue{Int}
+end
+
+IndicatorMap(m::Model) = IndicatorMap(m, 
+    Dict{Conditional, AffExpr}(), 
+    Vector{Vector{Implication}}(),
+    Ref(1),
+    Ref(1))
 
 getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
 
@@ -224,20 +203,48 @@ function getindicator!(m::IndicatorMap, c::Conditional, can_create=true)
             @show c
             error("Not allowed to create a new variable here. Something has gone wrong")
         end
-        z = newbinaryvar(m)
+        z = convert(AffExpr, newbinaryvar(m))
         implies!(m.model, z, c)
         m.indicators[c] = z
 
-        compl = !c
-        if !isa(compl, ComplementNotDefined)
-            m.indicators[compl] = 1 - z
+        if hascomplement(c)
+            m.indicators[!c] = 1 - z
         end
         return z
     end
 end
 
-
 getindicator!(m::Model, c::Conditional) = getindicator!(getindmap!(m), c)
+
+function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional)
+    for constraint in c
+        implies!(m, z, constraint)
+    end
+end
+
+struct UnboundedVariableException <: Exception
+    terms::AffExpr
+end
+
+function Base.showerror(io::IO, e::UnboundedVariableException)
+    print(io, "Cannot create an implication involving the expression: $(e.terms) because not all of the variables in it are fully bounded. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
+end
+
+function implies!(m::Model, z::AbstractJuMPScalar, constraint::Constraint)
+    expr_interval = interval(constraint.c.terms, false)
+    if constraint.c.ub != Inf
+        M = upperbound(expr_interval) - constraint.c.ub
+        isfinite(M) || throw(UnboundedVariableException(constraint.c.terms))
+        @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z)
+    end
+    if constraint.c.lb != -Inf
+        M = constraint.c.lb - lowerbound(expr_interval)
+        isfinite(M) || throw(UnboundedVariableException(constraint.c.terms))
+        @constraint m constraint.c.terms >= constraint.c.lb - M * (1 - z)
+    end
+end
+
+disjunction!(m::Model, args...) = disjunction!(getindmap!(m), args...)
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{1, Implication})
     z = newbinaryvar(indmap)
@@ -250,74 +257,109 @@ end
 
 function disjunction!(indmap::IndicatorMap, imps::NTuple{2, Implication})
     z = getindicator!(indmap, first(imps[1]))
-    implies!(indmap.model, z, second(imps[1]))
+    implies!(indmap.model, z, last(imps[1]))
     indmap.indicators[first(imps[2])] = 1 - z
     implies!(indmap.model, 1 - z, first(imps[2]))
-    implies!(indmap.model, 1 - z, second(imps[2]))
-    push!(indmap.disjunctions, Implication[imps...])
+    implies!(indmap.model, 1 - z, last(imps[2]))
+    push!(indmap.disjunctions, collect(imps))
 end
 
 function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     zs = getindicator!.(indmap, first.(imps))
-    implies!.(indmap.model, zs, second.(imps))
+    implies!.(indmap.model, zs, last.(imps))
     @constraint(indmap.model, sum(zs) == 1)
-    push!(indmap.disjunctions, Implication[imps...])
+    push!(indmap.disjunctions, collect(imps))
 end
 
 function  disjunction!(indmap::IndicatorMap, 
-                       conditions::Union{Tuple{Vararg{<:Conditional}},
-                                         <:AbstractArray{<:Conditional}})
-    disjunction!(indmap, (c -> (c => nothing)).(conditions))
+                       conditions::Union{Tuple{Vararg{Conditional}},
+                                         <:AbstractArray{Conditional}})
+    disjunction!(indmap, (c -> (c => Conditional(Set()))).(conditions))
 end
 
-disjunction!(m::Model, args...) = disjunction!(getindmap!(m), args...)
+implies!(m::Model, imps::Implication...) = disjunction!(m, imps)
 
-implies!(m::Model, imp::Implication...) = disjunction!(m, imp)
+implies!(m::Model, imps::Pair...) = implies!(m, convert.(Implication, imps)...)
+
+Base.convert(::Type{Conditional}, ::Void) = Conditional()
 
 function implies!(m::Model, imp::Implication)
     c1, c2 = imp
     comp1 = !c1
-    if isa(comp1, ComplementNotDefined)
-        throw(UnhandledComplementException(c1))
-    end
-    disjunction!(m, (imp, (comp1 => nothing)))
+    disjunction!(m, (imp, (comp1 => Conditional(Set()))))
 end
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(<=), <:Narg{2}})
-    lhs, rhs = c.args
-    g = lhs - rhs
-    M = upperbound(g)
-    if !all(isfinite(M))
-        error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
-    end
-    @constraint m lhs <= rhs + M * (1 - z)
-end 
+getmodel(x::JuMP.Variable) = x.m
+getmodel(x::JuMP.GenericAffExpr) = first(x.vars).m
+getmodel(c::Constraint) = getmodel(c.c.terms)
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(==), <:Narg{2}})
-    lhs, rhs = c.args
-    g = lhs - rhs
-    M_u = upperbound(g)
-    M_l = lowerbound(g)
-    if !all(isfinite(M_u)) || !all(isfinite(M_l))
-        error("Cannot create an implication for an unbounded variable. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
+function getmodel(c::Conditional)::Model
+    for arg in c
+        if !isempty(arg.c.terms.vars)
+            return getmodel(arg)
+        end
     end
-    @constraint(m, lhs - rhs <= M_u * (1 - z))
-    @constraint(m, lhs - rhs >= M_l * (1 - z))
-end 
+    error("Could not find JuMP Model in conditional $c")
+end
 
-implies!(::Model, ::AbstractJuMPScalar, ::Void) = nothing
-implies!(::Model, ::AbstractJuMPScalar, ::ComplementNotDefined) = nothing
+nan_to_null(x) = isnan(x) ? Nullable{typeof(x)}() : Nullable{typeof(x)}(x)
 
-function implies!(m::Model, z::AbstractJuMPScalar, c::Conditional{typeof(&)})
-    for arg in c.args
-        implies!(m, z, arg)
+"""
+Like JuMP.getvalue, but returns a Nullable{T}() for unset variables instead
+of throwing a warning
+"""
+_getvalue(x::Variable) = nan_to_null(JuMP._getValue(x))
+_getvalue(x::Number) = nan_to_null(x)
+
+function _getvalue(x::JuMP.GenericAffExpr{T, Variable}) where {T}
+    result::Nullable{T} = x.constant
+    for i in eachindex(x.coeffs)
+        result = result .+ x.coeffs[i] .* _getvalue(x.vars[i])
     end
+    result
+end
+
+function _getvalue(h::Constraint)
+    v = _getvalue(h.c.terms)
+    max.(v .- h.c.ub, h.c.lb .- v)
+end
+
+_getvalue(c::Conditional) = maximum(_getvalue, c)
+
+_setvalue(v::Variable, x) = JuMP.setvalue(v, x)
+function _setvalue(s::JuMP.GenericAffExpr, x)
+    @assert length(s.vars) == 1
+    _setvalue(s.vars[1], (x - s.constant) / s.coeffs[1])
+end
+
+Base.show(io::IO, cv::Implication) = print(io, "(", first(cv), ") implies (", last(cv), ")")
+
+Base.@pure isjump(x) = false
+Base.@pure isjump(args::Tuple) = any(isjump, args)
+Base.@pure isjump(arg::Pair) = isjump(arg.first)
+Base.@pure isjump(c::Constraint) = true
+Base.@pure isjump(c::Conditional) = any(isjump, c)
+Base.@pure isjump(x::AbstractJuMPScalar) = true
+Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
+
+function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==), typeof(in)}}
+    if isjump(args)
+        Conditional(op, args...)
+    else
+        op(args...)
+    end
+end
+
+_conditional(op, args...) = op(args...)
+
+function _all_conditional(args)
+    (&)(args...)
 end
 
 function switch!(m::Model, args::Pair{<:Conditional}...)
     y = newcontinuousvar(m)
     conditions = first.(args)
-    values = second.(args)
+    values = last.(args)
     setlowerbound(y, minimum(lowerbound, values))
     setupperbound(y, maximum(upperbound, values))
     disjunction!(m, map(cv -> (cv[1] => @?(y == cv[2])), args))
@@ -325,9 +367,9 @@ function switch!(m::Model, args::Pair{<:Conditional}...)
 end
 
 function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
-    y = newcontinuousvar(m, size(args[1].second))
+    y = newcontinuousvar(m, size(last(args[1])))
     conditions = first.(args)
-    values = second.(args)
+    values = last.(args)
     for I in eachindex(y)
         setlowerbound(y[I], minimum(v -> lowerbound(v[I]), values))
         setupperbound(y[I], maximum(v -> upperbound(v[I]), values))
@@ -379,14 +421,16 @@ function _unfix(s::JuMP.GenericAffExpr)
     setupperbound(s.vars[1], 1)
 end
 
-function _setvalue(m::Model, c::Conditional{typeof(==), <:Narg{2}})
-    _setvalue(c.args[1] - c.args[2], 0)
-    nothing
+function _setvalue(m::Model, c::Conditional)
+    if length(c) != 1
+        return nothing
+    end
+    constraint = first(c).c
+    if isfinite(constraint.lb) && constraint.lb == constraint.ub
+        _setvalue(constraint.terms, constraint.ub)
+    end
+    return nothing
 end
-
-# Fallback methods for most conditionals
-_setvalue(m::Model, c::Conditional) = nothing
-_setvalue(m::Model, ::Void) = nothing
 
 function warmstart!(m::Model, fix=false)
     indmap = getindmap!(m)
@@ -431,7 +475,7 @@ function switch(args::Pair...)
     else
         for arg in args
             if arg.first
-                return arg.second
+                return last(arg)
             end
         end
         error("One of the cases in the switch statement must always match")
