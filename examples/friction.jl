@@ -39,7 +39,7 @@ for i in 2:N
 end
 
 # Now set up a mixed-integer program to solve for all N states simultaneously
-m = Model(solver=CbcSolver())
+m = Model(solver=CbcSolver(logLevel=0))
 xvars = [@variable(m, [1:2], basename="x", lowerbound=-4, upperbound=4) for i in 1:N]
 @constraint(m, xvars[1] .== x0)
 for i in 2:N

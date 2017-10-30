@@ -31,7 +31,7 @@ function simulate(x0, us)
 end
 
 function run_mpc(x0::State, N=10)
-    m = Model(solver=GurobiSolver())
+    m = Model(solver=GurobiSolver(OutputFlag=0))
     @variable m -u_max <= u[1:N] <= u_max
     xs = [State(@variable(m, basename="q", lowerbound=-10, upperbound=10),
                 @variable(m, basename="v", lowerbound=-10, upperbound=10)) for i in 1:N]
