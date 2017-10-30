@@ -201,7 +201,15 @@ IndicatorMap(m::Model) = IndicatorMap(m,
     Ref(1),
     Ref(1))
 
-getindmap!(m::Model) = get!(m.ext, :indicator_map, IndicatorMap(m))::IndicatorMap
+function getindmap!(m::Model)::IndicatorMap
+    if haskey(m.ext, :indicator_map)
+        return m.ext[:indicator_map]
+    else
+        i = IndicatorMap(m)
+        m.ext[:indicator_map] = i
+        return i
+    end
+end
 
 function newcontinuousvar(m::IndicatorMap)
     var = @variable(m.model, basename="y_{anon$(m.y_idx[])}")
