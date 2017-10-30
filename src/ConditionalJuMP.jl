@@ -267,35 +267,30 @@ function implies!(m::Model, z::Indicator, constraint::Constraint)
     if constraint.c.ub != Inf
         M = upperbound(expr_interval) - constraint.c.ub
         isfinite(M) || throw(UnboundedVariableException(constraint.c.terms))
-        # if z.sense
-        #     expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), constraint.c.terms.constant - M)
-        # else
-        #     expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), constraint.c.terms.constant)
-        # end
-        # JuMP.addconstraint(m, GenericRangeConstraint(expr, -Inf, constraint.c.ub))
         if z.sense
-            @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z.var)
+            # @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z.var)
+            constant = constraint.c.terms.constant - M
+            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), 0.0)
         else
-            @constraint m constraint.c.terms <= constraint.c.ub + M * (z.var)
+            # @constraint m constraint.c.terms <= constraint.c.ub + M * (z.var)
+            constant = constraint.c.terms.constant
+            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), 0.0)
         end
-
-        # @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z)
+        JuMP.addconstraint(m, LinearConstraint(expr, -Inf, constraint.c.ub - constant))
     end
     if constraint.c.lb != -Inf
         M = constraint.c.lb - lowerbound(expr_interval)
         isfinite(M) || throw(UnboundedVariableException(constraint.c.terms))
-        # if z.sense
-        #     expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), constraint.c.terms.constant + M)
-        # else
-        #     expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), constraint.c.terms.constant)
-        # end
-        # JuMP.addconstraint(m, GenericRangeConstraint(expr, constraint.c.lb, Inf))
         if z.sense
-            @constraint m constraint.c.terms >= constraint.c.lb - M * (1 - z.var)
+            # @constraint m constraint.c.terms >= constraint.c.lb - M * (1 - z.var)
+            constant = constraint.c.terms.constant + M
+            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), 0.0)
         else
-            @constraint m constraint.c.terms >= constraint.c.lb - M * (z.var)
+            # @constraint m constraint.c.terms >= constraint.c.lb - M * (z.var)
+            constant = constraint.c.terms.constant
+            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), 0.0)
         end
-        # @constraint m constraint.c.terms >= constraint.c.lb - M * (1 - z)
+        JuMP.addconstraint(m, LinearConstraint(expr, constraint.c.lb - constant, Inf))
     end
 end
 
@@ -322,7 +317,9 @@ end
 function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     zs = getindicator!.(indmap, first.(imps))
     implies!.(indmap.model, zs, last.(imps))
-    @constraint(indmap.model, sum(variable.(zs)) == 1)
+    JuMP.addconstraint(indmap.model,
+        LinearConstraint(AffExpr(collect(variable.(zs)), ones(length(zs)), 0.0), 1.0, 1.0))
+    # @constraint(indmap.model, sum(variable.(zs)) == 1)
     push!(indmap.disjunctions, collect(imps))
 end
 
