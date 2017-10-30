@@ -261,6 +261,14 @@ function Base.showerror(io::IO, e::UnboundedVariableException)
     print(io, "Cannot create an implication involving the expression: $(e.terms) because not all of the variables in it are fully bounded. Please use `JuMP.setlowerbound()` and `JuMP.setupperbound()` to set finite bounds for all variables appearing in this expression.")
 end
 
+function append(v::AbstractVector{T}, x::T) where T
+    result = similar(v, length(v) + 1)
+    for i in 1:length(v)
+        result[i] = v[i]
+    end
+    result[end] = x
+    result
+end
 
 function implies!(m::Model, z::Indicator, constraint::Constraint)
     expr_interval = interval(constraint.c.terms, false)
@@ -270,11 +278,11 @@ function implies!(m::Model, z::Indicator, constraint::Constraint)
         if z.sense
             # @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z.var)
             constant = constraint.c.terms.constant - M
-            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), 0.0)
+            expr = AffExpr(append(constraint.c.terms.vars, z.var), append(constraint.c.terms.coeffs, M), 0.0)
         else
             # @constraint m constraint.c.terms <= constraint.c.ub + M * (z.var)
             constant = constraint.c.terms.constant
-            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), 0.0)
+            expr = AffExpr(append(constraint.c.terms.vars, z.var), append(constraint.c.terms.coeffs, -M), 0.0)
         end
         JuMP.addconstraint(m, LinearConstraint(expr, -Inf, constraint.c.ub - constant))
     end
@@ -284,11 +292,11 @@ function implies!(m::Model, z::Indicator, constraint::Constraint)
         if z.sense
             # @constraint m constraint.c.terms >= constraint.c.lb - M * (1 - z.var)
             constant = constraint.c.terms.constant + M
-            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, -M), 0.0)
+            expr = AffExpr(append(constraint.c.terms.vars, z.var), append(constraint.c.terms.coeffs, -M), 0.0)
         else
             # @constraint m constraint.c.terms >= constraint.c.lb - M * (z.var)
             constant = constraint.c.terms.constant
-            expr = AffExpr(vcat(constraint.c.terms.vars, z.var), vcat(constraint.c.terms.coeffs, M), 0.0)
+            expr = AffExpr(append(constraint.c.terms.vars, z.var), append(constraint.c.terms.coeffs, M), 0.0)
         end
         JuMP.addconstraint(m, LinearConstraint(expr, constraint.c.lb - constant, Inf))
     end
