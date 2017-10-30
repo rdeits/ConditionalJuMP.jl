@@ -87,7 +87,7 @@ end
         z2 = getindicator!(m, c2)
         z3 = getindicator!(m, c3)
         @test z1 === z3
-        @test z1 == 1 - z2
+        @test z1 == !z2
     end
 
     @testset "isjump" begin
