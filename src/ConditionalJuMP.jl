@@ -250,13 +250,15 @@ function getindmap!(m::Model)::IndicatorMap
 end
 
 function newcontinuousvar(m::IndicatorMap)
-    var = @variable(m.model, basename="y_{anon$(m.y_idx[])}")
+    varname = @sprintf("y_{anon%d}", m.y_idx[])
+    var = @variable(m.model, basename=varname)
     m.y_idx[] = m.y_idx[] + 1
     var
 end
 
 function newcontinuousvar(m::IndicatorMap, size::Dims)
-    var = reshape(@variable(m.model, [1:prod(size)], basename="{y_{anon$(m.y_idx[])}}"), size)
+    varname = @sprintf("{y_{anon%d}}", m.y_idx[])
+    var = reshape(@variable(m.model, [1:prod(size)], basename=varname), size)
     m.y_idx[] = m.y_idx[] + 1
     var
 end
@@ -264,7 +266,7 @@ end
 newcontinuousvar(m::Model, args...) = newcontinuousvar(getindmap!(m), args...)
 
 function newbinaryvar(m::IndicatorMap)
-    var = @variable(m.model, basename="z_{anon$(m.z_idx[])}", category=:Bin)
+    var = @variable(m.model, basename=@sprintf("z_{anon%d}", m.z_idx[]), category=:Bin)
     m.z_idx[] = m.z_idx[] + 1
     var
 end
