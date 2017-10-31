@@ -69,7 +69,7 @@ function simulate(q0, v0, N)
     q, v = q0, v0
     results = LCPUpdate{Float64}[]
     for i in 1:N
-        m = Model(solver=CbcSolver())
+        m = Model(solver=CbcSolver(logLevel=0))
         up = update(q, v, m)
         solve(m)
         push!(results, getvalue(up))
@@ -87,7 +87,7 @@ to optimize over
 """
 function optimize(q0, v0, N)::Vector{LCPUpdate{Float64}}
     q, v = q0, v0
-    m = Model(solver=CbcSolver())
+    m = Model(solver=CbcSolver(logLevel=0))
     results = []
     for i in 1:N
         up = update(q, v, m)
