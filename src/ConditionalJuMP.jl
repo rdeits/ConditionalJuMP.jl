@@ -145,6 +145,7 @@ function (==)(e1::Constraint, e2::Constraint)
     (e1.c.lb == e2.c.lb) || return false
     (e1.c.ub == e2.c.ub) || return false
     e1.c.terms.constant == e2.c.terms.constant || return false
+    length(e1.vars) == length(e2.vars) || return false
     for i in eachindex(e1.c.terms.vars)
         e1.c.terms.vars[i] == e2.c.terms.vars[i] || return false
         e1.c.terms.coeffs[i] == e2.c.terms.coeffs[i] || return false
