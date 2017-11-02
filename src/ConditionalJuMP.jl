@@ -141,20 +141,28 @@ end
 
 Base.hash(c::Constraint, h::UInt) = hash(c.hash, h)
 
-(==)(e1::Constraint, e2::Constraint) = (e1.c.lb == e2.c.lb) && (e1.c.ub == e2.c.ub) && (e1.c.terms == e2.c.terms)
+function (==)(e1::Constraint, e2::Constraint)
+    (e1.c.lb == e2.c.lb) || return false
+    (e1.c.ub == e2.c.ub) || return false
+    e1.c.terms.constant == e2.c.terms.constant || return false
+    for i in eachindex(e1.c.terms.vars)
+        e1.c.terms.vars[i] == e2.c.terms.vars[i] || return false
+        e1.c.terms.coeffs[i] == e2.c.terms.coeffs[i] || return false
+    end
+    return true
+end
 
 show(io::IO, h::Constraint) = print(io, "$(h.c.lb) <= $(h.c.terms) <= $(h.c.ub)")
 
-const Conditional = Set{Constraint{Float64}}
+const Conditional = Vector{Constraint{Float64}}
 
 
 show(io::IO, c::Conditional) = print(io, join(c, " & "))
 
-Conditional(::typeof(<=), x, y) = Conditional(Set([Constraint(x - y, -Inf, 0)]))
-Conditional(::typeof(>=), x, y) = Conditional(Set([Constraint(y - x, -Inf, 0)]))
-Conditional(::typeof(==), x, y) = Conditional(Set([Constraint(x - y, 0, 0)]))
+Conditional(::typeof(<=), x, y) = Conditional([Constraint(x - y, -Inf, 0)])
+Conditional(::typeof(>=), x, y) = Conditional([Constraint(y - x, -Inf, 0)])
+Conditional(::typeof(==), x, y) = Conditional([Constraint(x - y, 0, 0)])
 (&)(c1::Conditional, c2::Conditional) = union(c1, c2)
-Conditional() = Conditional(Set())
 
 struct UnhandledComplementException <: Exception
     c::Conditional
@@ -324,7 +332,7 @@ function implies!(m::Model, z::Indicator, constraint::Constraint)
         M = upperbound(expr_interval) - constraint.c.ub
         isfinite(M) || throw(UnboundedVariableException(constraint.c.terms))
         if z.sense
-            # @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z.var)
+            @constraint m constraint.c.terms <= constraint.c.ub + M * (1 - z.var)
             constant = constraint.c.terms.constant - M
             expr = AffExpr(append(constraint.c.terms.vars, z.var), append(constraint.c.terms.coeffs, M), 0.0)
         else
@@ -382,7 +390,7 @@ end
 function  disjunction!(indmap::IndicatorMap, 
                        conditions::Union{Tuple{Vararg{Conditional}},
                                          <:AbstractArray{Conditional}})
-    disjunction!(indmap, (c -> (c => Conditional(Set()))).(conditions))
+    disjunction!(indmap, (c -> (c => Conditional())).(conditions))
 end
 
 implies!(m::Model, imps::Implication...) = disjunction!(m, imps)
@@ -394,7 +402,7 @@ Base.convert(::Type{Conditional}, ::Void) = Conditional()
 function implies!(m::Model, imp::Implication)
     c1, c2 = imp
     comp1 = !c1
-    disjunction!(m, (imp, (comp1 => Conditional(Set()))))
+    disjunction!(m, (imp, (comp1 => Conditional())))
 end
 
 getmodel(x::JuMP.Variable) = x.m
@@ -452,15 +460,16 @@ end
 Base.show(io::IO, cv::Implication) = print(io, "(", first(cv), ") implies (", last(cv), ")")
 
 Base.@pure isjump(x) = false
-Base.@pure isjump(args::Tuple) = any(isjump, args)
+# Base.@pure isjump(args::Tuple) = any(isjump, args)
+Base.@pure isjump(x, args...) = isjump(x) || isjump(args...)
 Base.@pure isjump(arg::Pair) = isjump(arg.first)
 Base.@pure isjump(c::Constraint) = true
-Base.@pure isjump(c::Conditional) = any(isjump, c)
+Base.@pure isjump(c::Conditional) = true
 Base.@pure isjump(x::AbstractJuMPScalar) = true
 Base.@pure isjump(x::AbstractArray{<:AbstractJuMPScalar}) = true
 
 function _conditional(op::Op, args...) where {Op <: Union{typeof(<=), typeof(>=), typeof(==), typeof(in)}}
-    if isjump(args)
+    if isjump(args...)
         Conditional(op, args...)
     else
         op(args...)
@@ -583,7 +592,7 @@ function warmstart!(m::Model, fix=false)
 end
 
 function switch(args::Pair...)
-    if isjump(args)
+    if isjump(args...)
         switch!(getmodel(args[1].first), args...)
     else
         for arg in args
