@@ -601,4 +601,18 @@ end
             include("../examples/polyhedra.jl")
         end
     end
+
+    @testset "constant objective" begin
+        m = Model(solver=GurobiSolver())
+        @variable m x
+        @variable m y
+        @objective m Min (x - 1)^2 + (y + 3)^2
+        ConditionalJuMP.handle_constant_objective!(m)
+        @test getobjective(m).aff.constant == 0
+        @test sum(m.colCat .== :Cont) == 2
+        @test sum(m.colCat .== :Fixed) == 1
+        solve(m)
+        @test getvalue(x) ≈ 1
+        @test getvalue(y) ≈ -3
+    end
 end

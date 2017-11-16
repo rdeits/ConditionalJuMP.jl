@@ -605,4 +605,20 @@ function switch(args::Pair...)
     end
 end
 
+"""
+Gurobi doesn't understand constant terms in the objective, which can
+affect the way the relative MIP gap is interpreted. To work around this,
+we'll replace the constant term k with an affine term 1*x for a new 
+variable x fixed to equal k. 
+"""
+function handle_constant_objective!(m::Model)
+    x = @variable(m, basename="x_{objective_constant}")
+    obj = getobjective(m)
+    k = obj.aff.constant
+    JuMP.fix(x, k)
+    JuMP.setobjective(m, getobjectivesense(m), obj - k + x)
+    @assert getobjective(m).aff.constant == 0
+end
+
+
 end
