@@ -603,16 +603,14 @@ end
     end
 
     @testset "constant objective" begin
-        m = Model(solver=GurobiSolver())
-        @variable m x
-        @variable m y
-        @objective m Min (x - 1)^2 + (y + 3)^2
+        m = Model(solver=CbcSolver())
+        @variable m x >= 0
+        @objective m Min x - 1 
         ConditionalJuMP.handle_constant_objective!(m)
         @test getobjective(m).aff.constant == 0
-        @test sum(m.colCat .== :Cont) == 2
+        @test sum(m.colCat .== :Cont) == 1
         @test sum(m.colCat .== :Fixed) == 1
         solve(m)
-        @test getvalue(x) ≈ 1
-        @test getvalue(y) ≈ -3
+        @test getvalue(x) ≈ 0
     end
 end
