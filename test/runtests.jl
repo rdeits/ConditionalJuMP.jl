@@ -601,4 +601,16 @@ end
             include("../examples/polyhedra.jl")
         end
     end
+
+    @testset "constant objective" begin
+        m = Model(solver=CbcSolver())
+        @variable m x >= 0
+        @objective m Min x - 1 
+        ConditionalJuMP.handle_constant_objective!(m)
+        @test getobjective(m).aff.constant == 0
+        @test sum(m.colCat .== :Cont) == 1
+        @test sum(m.colCat .== :Fixed) == 1
+        solve(m)
+        @test getvalue(x) ≈ 0
+    end
 end
