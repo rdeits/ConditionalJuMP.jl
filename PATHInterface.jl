@@ -61,14 +61,14 @@ end
 
 # function build_lcp(model::Model)
 #     lcp = PartialLCP(copy(model.colLower), copy(model.colUpper))
-    
+
 #     iszero(getobjective(model)) || throw(CannotConstructLCP("LCP must not have an objective"))
-    
+
 #     for constraint in linear_constraints(model)
 #         if !is_equality(constraint)
 #             if lowerbound(constraint) != -Inf
 #                 # Create a slack variable s >= 0 such that (terms - s) == lb
-                
+
 #                 s_idx = add_slack!(lcp)
 #                 # Create constraint terms == lb
 #                 add_equality!(lcp, constraint.terms, lowerbound(constraint))
@@ -79,7 +79,7 @@ end
 #             end
 #             if upperbound(constraint) != Inf
 #                 # Create a slack variable s >= 0 such that (terms + s) == ub
-                
+
 #                 s_idx = add_slack!(lcp)
 #                 # Create constraint terms == ub
 #                 add_equality!(lcp, constraint.terms, upperbound(constraint))
@@ -91,8 +91,8 @@ end
 #         else
 #             add_equality!(lcp, constraint.terms, upperbound(constraint))
 #         end
-#     end      
-        
+#     end
+
 #     LCP(lcp)
 # end
 
@@ -100,25 +100,33 @@ end
 import MathProgBase.SolverInterface
 SI = SolverInterface
 
-struct PATHLCPSolver <: SI.AbstractMathProgSolver
+struct Complementarity
+    x::Variable
+    F::AffExpr
 end
+
+mutable struct PATHLCPSolver <: SI.AbstractMathProgSolver
+    complementarities::Vector{Complementarity}
+end
+
+PATHLCPSolver() = PATHLCPSolver(Complementarity[])
 
 mutable struct PATHLCPModel <: SI.AbstractLinearQuadraticModel
     lcp::Nullable{LCP{Cdouble}}
     z::Nullable{Vector{Cdouble}}
     F::Nullable{Vector{Cdouble}}
     status::Nullable{Symbol}
+    complementarities::Vector{Complementarity}
 end
 
-SI.LinearQuadraticModel(s::PATHLCPSolver) = PATHLCPModel(nothing, nothing, nothing, nothing)
+SI.LinearQuadraticModel(s::PATHLCPSolver) = PATHLCPModel(nothing, nothing, nothing, nothing, s.complementarities)
 
 function standard_lp_form(A::AbstractMatrix{T}, lb, ub, constr_lb, constr_ub) where T
     nc, nv = size(A)
-    num_slacks = sum(1:size(A, 1)) do i
-        if constr_lb[i] == constr_ub[i]
-            0
-        else
-            1
+    num_slacks = 0
+    for (lb, ub) in zip(constr_lb, constr_ub)
+        if lb != ub
+            num_slacks += 1
         end
     end
 
@@ -158,13 +166,23 @@ function SI.loadproblem!(m::PATHLCPModel, A, lb, ub, obj, constr_lb, constr_ub, 
     nc = size(A, 1)
     nv = size(A, 2)
 
-    m.lcp = LCP{Cdouble}(
+    lcp = LCP{Cdouble}(
         vcat(lb, fill(-Inf, nc)),
         vcat(ub, fill(Inf, nc)),
         vcat(zeros(nv), .-constr_lb),
-        [spzeros(nv, nv + nc); 
+        [spzeros(nv, nv + nc);
              A   spzeros(nc, nc)]
         )
+
+    for c in m.complementarities
+        lcp.lb[c.x.col] = max(lcp.lb[c.x.col], 0)
+        for i in eachindex(c.F.vars)
+            lcp.M[c.x.col, c.F.vars[i].col] += c.F.coeffs[i]
+        end
+        lcp.q[c.x.col] = c.F.constant
+    end
+
+    m.lcp = lcp
 end
 
 function SI.optimize!(m::PATHLCPModel)
@@ -188,5 +206,31 @@ const status_table = Dict(
 SI.status(m::PATHLCPModel) = status_table[get(m.status)]
 SI.getobjval(m::PATHLCPModel) = 0.0
 SI.getsolution(m::PATHLCPModel) = get(m.z)
+
+function handle_complementarities(m::Model; kwargs...)
+    m.solver.complementarities = complementarities(m)
+    JuMP.solve(m; ignore_solve_hook=true, kwargs...)
+end
+
+function set_solvehook!(m::Model)
+    if m.solvehook === nothing
+        m.solvehook = handle_complementarities
+    else
+        if m.solvehook !== handle_complementarities
+            error("Another solve hook is present.")
+        end
+    end
+end
+
+function complementarities(m::Model)
+    get!(m.ext, :complements) do
+        Complementarity[]
+    end::Vector{Complementarity}
+end
+
+function complementarity!(m::Model, x::Variable, F::Union{Variable, AffExpr})
+    set_solvehook!(m)
+    push!(complementarities(m), Complementarity(x, F))
+end
 
 end
