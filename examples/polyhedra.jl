@@ -2,7 +2,7 @@ using Base.Test
 using JuMP
 using Cbc
 using ConditionalJuMP
-using Polyhedra: SimpleHRepresentation
+using Polyhedra
 
 # In this example, we search for the point closest to the origin in the union
 # of a list of convex polyhedra
@@ -10,8 +10,8 @@ using Polyhedra: SimpleHRepresentation
 # This implementation lets us add disjunctions and implications of the form
 #   x in P
 # where x is a vector and P is a Polyhedron
-function ConditionalJuMP.Conditional(op::typeof(in), x::AbstractVector, P::SimpleHRepresentation)
-    (&)([@?(P.A[i, :]' * x <= P.b[i]) for i in 1:length(P)]...)
+function ConditionalJuMP.Conditional(op::typeof(in), x::AbstractVector, P::HRepresentation)
+    (&)([@?(h.a' * x <= h.β) for h in allhalfspaces(P)]...)
 end
 
 # A simple L1-norm objective we can minimize (since the Cbc 
@@ -26,10 +26,10 @@ function l1norm_objective(x::AbstractVector{Variable})
 end
 
 # P1 is a box from [-1.5, -1] to [-0.5, 1]
-P1 = SimpleHRepresentation(vcat(eye(2), -eye(2)), [-0.5, 1, 1.5, 1])
+P1 = hrep(vcat(eye(2), -eye(2)), [-0.5, 1, 1.5, 1])
 
 # P2 is a box from [1, -1] to [2, 1]
-P2 = SimpleHRepresentation(vcat(eye(2), -eye(2)), [2., 1, -1, 1])
+P2 = hrep(vcat(eye(2), -eye(2)), [2., 1, -1, 1])
 
 m = Model(solver=CbcSolver(logLevel=0))
 @variable(m, -5 <= x[1:2] <= 5)
