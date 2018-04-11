@@ -27,8 +27,8 @@ end
         for i in 1:1000
             N = rand(1:20)
             x = randn(N)' * rand(q, N)
-            s1 = ConditionalJuMP.simplify(copy(x))
-            s2 = ConditionalJuMP.simplify!(copy(x))
+            s1 = ConditionalJuMP.simplify_dict(copy(x))
+            s2 = ConditionalJuMP.simplify_inplace!(copy(x))
             @test s1.constant == s2.constant
             @test length(s1.vars) == length(s2.vars)
             @test length(s1.coeffs) == length(s2.coeffs)

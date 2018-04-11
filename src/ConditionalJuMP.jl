@@ -21,10 +21,23 @@ include("macros.jl")
 const NArg{N} = NTuple{N, Any}
 
 """
+Simplification function that chooses the appropriate algorithm based on the number
+of variables.
+"""
+function simplify!(e::JuMP.GenericAffExpr{T, Variable}) where T
+    n = length(e.vars)
+    # println(n)
+    ((n < 100) ? simplify_inplace! : simplify_dict)(e)
+    # tic()
+    simplify_inplace!(e)
+    # toc()
+end
+
+"""
 Naive O(N^2) simplification. Slower for very large expressions, but allocates
 no memory and is solidly faster for expressions with < 100 variables. 
 """
-function simplify!(e::JuMP.GenericAffExpr{T, Variable}) where T
+function simplify_inplace!(e::JuMP.GenericAffExpr{T, Variable}) where T
     i1 = 1
     iend = length(e.vars)
     while i1 < iend
@@ -54,7 +67,7 @@ end
 O(N) simplification, but with a substantially larger constant cost due to the
 need to construct a Dict. 
 """
-function simplify(e::JuMP.GenericAffExpr{T, Variable}) where T
+function simplify_dict(e::JuMP.GenericAffExpr{T, Variable}) where T
     vars = Variable[]
     coeffs = T[]
 
