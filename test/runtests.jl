@@ -21,23 +21,39 @@ end
 
 @testset "ConditionalJuMP" begin
     @testset "simplification" begin
-        srand(42)
-        m = Model()
-        @variable m q[1:100]
-        for i in 1:1000
-            N = rand(1:20)
-            x = randn(N)' * rand(q, N)
-            s1 = copy(x)
-            s2 = copy(x)
-            ConditionalJuMP.simplify_dict!(s1)
-            ConditionalJuMP.simplify_inplace!(s2)
-            @test s1.constant == s2.constant
-            @test length(s1.vars) == length(s2.vars)
-            @test length(s1.coeffs) == length(s2.coeffs)
-            @test length(s1.vars) == length(unique(s1.vars))
-            @test sort(collect(zip(s1.vars, s1.coeffs)), by=p -> (p[1].col, p[2])) == sort(collect(zip(s2.vars, s2.coeffs)), by=p -> (p[1].col, p[2]))
-            for v in s1.vars
-                @test count(x -> x == v, s1.vars) == 1
+        test_cases = [
+            ("small amount of variables", 100, 20, 1000),
+            ("large amount of variables", 10000, 2000, 100),
+            ("huge amount of variables", 100000, 20000, 1),
+        ]
+        for (test_name, num_vars_total, num_vars_in_expr, num_trials) in test_cases
+            @testset "$(test_name)" begin
+                srand(42)
+                m = Model()
+                @variable m q[1:num_vars_total]
+                for i in 1:num_trials
+                    N = rand(1:num_vars_in_expr)
+                    x = randn(N)' * rand(q, N)
+                    s1 = copy(x)
+                    s2 = copy(x)
+                    ConditionalJuMP.simplify_dict!(s1)
+                    ConditionalJuMP.simplify_inplace!(s2)
+                    @test s1.constant == s2.constant
+                    @test length(s1.vars) == length(s2.vars)
+                    @test length(s1.coeffs) == length(s2.coeffs)
+                    @test length(s1.vars) == length(unique(s1.vars))
+
+                    s1_sorted = sort(collect(zip(s1.vars, s1.coeffs)), by=p -> (p[1].col, p[2]))
+                    s2_sorted = sort(collect(zip(s2.vars, s2.coeffs)), by=p -> (p[1].col, p[2]))
+                    for (v1, v2) in zip(s1_sorted, s2_sorted)
+                        @test v1[1] == v2[1]
+                        @test v1[2] ≈ v2[2]
+                        # directly testing equality of the two sorted lists is too strict and leads to spurious errors.
+                    end
+                    for v in s1.vars
+                        @test count(x -> x == v, s1.vars) == 1
+                    end
+                end
             end
         end
     end
