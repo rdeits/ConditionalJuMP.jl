@@ -26,11 +26,7 @@ of variables.
 """
 function simplify!(e::JuMP.GenericAffExpr{T, Variable}) where T
     n = length(e.vars)
-    # println(n)
-    ((n < 100) ? simplify_inplace! : simplify_dict)(e)
-    # tic()
-    simplify_inplace!(e)
-    # toc()
+    ((n < 100) ? simplify_inplace! : simplify_dict!)(e)
 end
 
 """
@@ -67,7 +63,7 @@ end
 O(N) simplification, but with a substantially larger constant cost due to the
 need to construct a Dict. 
 """
-function simplify_dict(e::JuMP.GenericAffExpr{T, Variable}) where T
+function simplify_dict!(e::JuMP.GenericAffExpr{T, Variable}) where T
     vars = Variable[]
     coeffs = T[]
 
@@ -89,6 +85,9 @@ function simplify_dict(e::JuMP.GenericAffExpr{T, Variable}) where T
     if iszero(constant)
         constant = zero(constant)
     end
+    e.vars = vars
+    e.coeffs = coeffs
+    e.constant = constant
     AffExpr(vars, coeffs, constant)
 end
 
