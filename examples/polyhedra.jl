@@ -26,10 +26,10 @@ function l1norm_objective(x::AbstractVector{Variable})
 end
 
 # P1 is a box from [-1.5, -1] to [-0.5, 1]
-P1 = SimpleHRepresentation(vcat(eye(2), -eye(2)), [-0.5, 1, 1.5, 1])
+P1 = hrep(vcat(eye(2), -eye(2)), [-0.5, 1, 1.5, 1])
 
 # P2 is a box from [1, -1] to [2, 1]
-P2 = SimpleHRepresentation(vcat(eye(2), -eye(2)), [2., 1, -1, 1])
+P2 = hrep(vcat(eye(2), -eye(2)), [2., 1, -1, 1])
 
 m = Model(solver=CbcSolver(logLevel=0))
 @variable(m, -5 <= x[1:2] <= 5)
