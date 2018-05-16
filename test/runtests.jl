@@ -1,5 +1,6 @@
 using ConditionalJuMP
 using ConditionalJuMP: switch!,  _getvalue, UnhandledComplementException, hascomplement, getindicator!, disjunction!, isjump, Conditional
+using IntervalArithmetic: Interval
 using JuMP
 using Cbc
 using Base.Test
