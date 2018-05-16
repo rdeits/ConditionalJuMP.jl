@@ -50,6 +50,19 @@ end
         @test lowerbound(e - 2x) == 1
         @test lowerbound(AffExpr(2)) == 2
         @test upperbound(AffExpr(2)) == 2
+
+        i = interval(e, false)
+        @test i == Interval(3, 7)
+        @test lowerbound(i) == lowerbound(e)
+        @test upperbound(i) == upperbound(e)
+
+        i = interval(5.0)
+        @test lowerbound(i) == 5.0
+        @test upperbound(i) == 5.0
+
+        i = interval(x)
+        @test lowerbound(i) == 1
+        @test upperbound(i) == 3
     end
 
     @testset "simple model" begin

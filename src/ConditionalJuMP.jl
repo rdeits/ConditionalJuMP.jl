@@ -13,6 +13,7 @@ export @disjunction,
     @switch,
     @ifelse,
     warmstart!,
+    interval,
     upperbound,
     lowerbound
 
@@ -193,6 +194,9 @@ lowerbound(x::Number) = x
 upperbound(x::Number) = x
 lowerbound(x::Variable) = JuMP.getlowerbound(x)
 upperbound(x::Variable) = JuMP.getupperbound(x)
+
+interval(x::Number, simplify=true) = Interval(x, x)
+interval(x::Variable, simplify=true) = Interval(JuMP.getlowerbound(x), JuMP.getupperbound(x))
 
 function interval(e::JuMP.GenericAffExpr, needs_simplification=true)
     if needs_simplification
