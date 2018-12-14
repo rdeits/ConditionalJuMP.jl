@@ -3,12 +3,15 @@ using ConditionalJuMP: switch!,  _getvalue, UnhandledComplementException, hascom
 using IntervalArithmetic: Interval
 using JuMP
 using Cbc
-using Base.Test
+using Test
+using Random
+using Pkg
+using Nullables
 
 # Macro hygiene
 module MacroHygieneTest
     using ConditionalJuMP: @?
-    using Base.Test
+    using Test
 
     function f(x)
         x + 1
@@ -29,11 +32,11 @@ end
         ]
         for (test_name, num_vars_total, num_vars_in_expr, num_trials) in test_cases
             @testset "$(test_name)" begin
-                srand(42)
                 m = Model()
+                seed = Random.seed!(42)
                 @variable m q[1:num_vars_total]
                 for i in 1:num_trials
-                    N = rand(1:num_vars_in_expr)
+                    N = rand(seed, 1:num_vars_in_expr)
                     x = randn(N)' * rand(q, N)
                     s1 = copy(x)
                     s2 = copy(x)
@@ -91,7 +94,7 @@ end
         c2 = @?(x >= 0)
         c3 = @?(x + 5 <= 5)
         c4 = @?(x + 1 == 10)
-        
+
         print(IOBuffer(), c1)
         print(IOBuffer(), c2)
         print(IOBuffer(), c1 & c2)
@@ -246,7 +249,7 @@ end
 
     @testset "dynamics" begin
         function update(x)
-            @ifelse(x <= 0, 1, -1)
+            @ifelse_conditional(x <= 0, 1, -1)
         end
 
         @testset "mixed integer" begin
@@ -300,7 +303,7 @@ end
 
         @testset "vector" begin
             function update2(x)
-                @ifelse(x[1] <= 0,
+                @ifelse_conditional(x[1] <= 0,
                     [1, 2],
                     [3, 4])
             end
@@ -318,7 +321,7 @@ end
         io = IOBuffer()
         show(io, MIME"text/latex"(), m)
         seekstart(io)
-        readstring(io)
+        read(io, String)
     end
 
     @testset "fixing and unfixing" begin
@@ -365,7 +368,7 @@ end
             c1 = @?(x <= -0.5)
             c3 = @?(x >= 0.5)
             c2 = !c1 & !c3
-            @implies(m, 
+            @implies(m,
                 c1 => nothing,
                 c2 => y == -0.5,
                 c3 => nothing)
@@ -498,7 +501,7 @@ end
                     ((x >= -0.5) & (x <= 0.5)) => [0.2, 2.2],
                     (x >= 0.5) => [0.3, 3.3]
                 )
-            end 
+            end
 
             @test @inferred(g(-1)) == [0.1, 1.1]
             @test @inferred(g(0)) == [0.2, 2.2]
@@ -619,7 +622,7 @@ end
         end
 
         @testset "block with wall" begin
-            if Pkg.installed("Gurobi") !== nothing
+            if haskey(Pkg.installed(), "Gurobi")
                 include("../examples/block_with_wall.jl")
                 run_mpc(State(1.0, -1.0), 10)
             end
@@ -637,7 +640,7 @@ end
     @testset "constant objective" begin
         m = Model(solver=CbcSolver())
         @variable m x >= 0
-        @objective m Min x - 1 
+        @objective m Min x - 1
         ConditionalJuMP.handle_constant_objective!(m)
         @test getobjective(m).aff.constant == 0
         @test sum(m.colCat .== :Cont) == 1

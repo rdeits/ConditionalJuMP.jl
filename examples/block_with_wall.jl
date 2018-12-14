@@ -14,7 +14,7 @@ const Δt = 0.1
 const u_max = 10
 
 function update(x::State, u)
-    contact_force = ifelse(@?(x.q <= 0),
+    contact_force = ifelse_conditional(@?(x.q <= 0),
         -k * x.q,
         zero(x.q))
     acceleration = u + contact_force

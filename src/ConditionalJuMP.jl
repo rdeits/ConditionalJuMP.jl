@@ -6,12 +6,14 @@ using JuMP
 using JuMP: GenericAffExpr, GenericRangeConstraint, Variable, AbstractJuMPScalar
 using IntervalArithmetic: Interval
 import Base: <=, ==, >=, !, &, hash, show
+using Printf
+using Nullables
 
 export @disjunction,
     @implies,
     @?,
     @switch,
-    @ifelse,
+    @ifelse_conditional,
     warmstart!,
     interval,
     upperbound,
@@ -32,7 +34,7 @@ end
 
 """
 Naive O(N^2) simplification. Slower for very large expressions, but allocates
-no memory and is solidly faster for expressions with < 100 variables. 
+no memory and is solidly faster for expressions with < 100 variables.
 """
 function simplify_inplace!(e::JuMP.GenericAffExpr{T, Variable}) where T
     i1 = 1
@@ -62,7 +64,7 @@ end
 
 """
 O(N) simplification, but with a substantially larger constant cost due to the
-need to construct a Dict. 
+need to construct a Dict.
 """
 function simplify_dict!(e::JuMP.GenericAffExpr{T, Variable}) where T
     vars = Variable[]
@@ -258,8 +260,8 @@ struct IndicatorMap
     z_idx::Base.RefValue{Int}
 end
 
-IndicatorMap(m::Model) = IndicatorMap(m, 
-    Dict{Conditional, AffExpr}(), 
+IndicatorMap(m::Model) = IndicatorMap(m,
+    Dict{Conditional, AffExpr}(),
     Vector{Vector{Implication}}(),
     Ref(1),
     Ref(1))
@@ -404,17 +406,20 @@ function disjunction!(indmap::IndicatorMap, imps::Union{Tuple, AbstractArray})
     push!(indmap.disjunctions, collect(imps))
 end
 
-function  disjunction!(indmap::IndicatorMap, 
+function  disjunction!(indmap::IndicatorMap,
                        conditions::Union{Tuple{Vararg{Conditional}},
                                          <:AbstractArray{Conditional}})
     disjunction!(indmap, (c -> (c => Conditional())).(conditions))
 end
 
+Broadcast.broadcastable(i::IndicatorMap) = Ref(i)
+Broadcast.broadcastable(m::Model) = Ref(m)
+
 implies!(m::Model, imps::Implication...) = disjunction!(m, imps)
 
 implies!(m::Model, imps::Pair...) = implies!(m, convert.(Implication, imps)...)
 
-Base.convert(::Type{Conditional}, ::Void) = Conditional()
+Base.convert(::Type{Conditional}, ::Nothing) = Conditional()
 
 function implies!(m::Model, imp::Implication)
     c1, c2 = imp
@@ -522,7 +527,7 @@ function switch!(m::Model, args::Pair{<:Conditional, <:AbstractArray}...)
 end
 
 
-function Base.ifelse(c::Conditional, v1, v2)
+function ifelse_conditional(c::Conditional, v1, v2)
     @assert size(v1) == size(v2)
     m = getmodel(c)
     y = newcontinuousvar(m)
@@ -532,7 +537,7 @@ function Base.ifelse(c::Conditional, v1, v2)
     y
 end
 
-function Base.ifelse(c::Conditional, v1::AbstractArray, v2::AbstractArray)
+function ifelse_conditional(c::Conditional, v1::AbstractArray, v2::AbstractArray)
     @assert size(v1) == size(v2)
     m = getmodel(c)
     y = newcontinuousvar(m, size(v1))
@@ -578,7 +583,7 @@ function warmstart!(m::Model, fix=false)
         for implications in indmap.disjunctions
             violations = Nullable{Float64}[_getvalue(first(i)) for i in implications]
             if !any(isnull, violations)
-                best_match = indmin(get.(violations))
+                best_match = argmin(get.(violations))
                 for i in eachindex(violations)
                     imp = implications[i]
                     lhs, rhs = imp
@@ -624,8 +629,8 @@ end
 """
 Gurobi doesn't understand constant terms in the objective, which can
 affect the way the relative MIP gap is interpreted. To work around this,
-we'll replace the constant term k with an affine term 1*x for a new 
-variable x fixed to equal k. 
+we'll replace the constant term k with an affine term 1*x for a new
+variable x fixed to equal k.
 """
 function handle_constant_objective!(m::Model)
     x = @variable(m, basename="x_{objective_constant}")
