@@ -26,8 +26,6 @@ branches:
 #before_script: # homebrew for mac
 #  - if [ $TRAVIS_OS_NAME = osx ]; then brew install gcc; fi
 
-before_script:
-  - export PATH=$HOME/.local/bin:$PATH
 
 script:
   - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
