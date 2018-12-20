@@ -33,10 +33,10 @@ end
         for (test_name, num_vars_total, num_vars_in_expr, num_trials) in test_cases
             @testset "$(test_name)" begin
                 m = Model()
-                seed = Random.seed!(42)
+                Random.seed!(42)
                 @variable m q[1:num_vars_total]
                 for i in 1:num_trials
-                    N = rand(seed, 1:num_vars_in_expr)
+                    N = rand(1:num_vars_in_expr)
                     x = randn(N)' * rand(q, N)
                     s1 = copy(x)
                     s2 = copy(x)
