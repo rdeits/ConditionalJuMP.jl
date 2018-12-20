@@ -18,19 +18,6 @@ branches:
   only:
     - master
 
-## uncomment and modify the following lines to manually install system packages
-#addons:
-#  apt: # apt-get for linux
-#    packages:
-#    - gfortran
-#before_script: # homebrew for mac
-#  - if [ $TRAVIS_OS_NAME = osx ]; then brew install gcc; fi
-
-
-script:
-  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia --check-bounds=yes -e 'using Pkg; Pkg.clone(pwd()); Pkg.build("ConditionalJuMP"); Pkg.test("ConditionalJuMP"; coverage=true)'
-  #- julia -e 'Pkg.clone(pwd()); Pkg.build("ConditionalJuMP"); Pkg.test("ConditionalJuMP"; coverage=true)'
 after_success:
   # push coverage results to Codecov
   - julia -e 'import Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit(Codecov.process_folder())'
