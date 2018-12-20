@@ -249,7 +249,7 @@ end
 
     @testset "dynamics" begin
         function update(x)
-            @ifelse_conditional(x <= 0, 1, -1)
+            @ifelse(x <= 0, 1, -1)
         end
 
         @testset "mixed integer" begin
@@ -303,7 +303,7 @@ end
 
         @testset "vector" begin
             function update2(x)
-                @ifelse_conditional(x[1] <= 0,
+                @ifelse(x[1] <= 0,
                     [1, 2],
                     [3, 4])
             end

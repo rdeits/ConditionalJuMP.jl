@@ -18,7 +18,7 @@ function _conditionalize(ex::Expr)
         _conditionalize_function_broadcast(ex)
     elseif is_operator_broadcast(ex)
         _conditionalize_operator_broadcast(ex)
-    elseif ex.head == :call 
+    elseif ex.head == :call
         if ex.args[1] == :(=>)
             Expr(:call, :(=>), _conditionalize.(ex.args[2:end])...)
         else
@@ -43,6 +43,6 @@ macro switch(args...)
     Expr(:call, :switch, _conditionalize.(args)...)
 end
 
-macro ifelse_conditional(c, v1, v2)
+macro ifelse(c, v1, v2)
     Expr(:call, :ifelse_conditional, _conditionalize(c), v1, v2)
 end

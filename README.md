@@ -93,7 +93,7 @@ solve(m)
 
 ## Disjunctions
 
-This package also provides the `@ifelse_conditional` macro to create simple `if` statements which work both on numbers and on optimization variables. For example, let's write a simple update function:
+This package also provides the `@ifelse` macro to create simple `if` statements which work both on numbers and on optimization variables. For example, let's write a simple update function:
 
 ```julia
 function update(x)
@@ -129,11 +129,11 @@ Stacktrace:
  [1] update(::JuMP.Variable) at ./REPL[3]:2
 ```
 
-But if we replace the `if` statement with `@ifelse_conditional`, then the function will magically just work in both cases:
+But if we replace the `if` statement with `@ifelse`, then the function will magically just work in both cases:
 
 ```julia
 function update(x)
-    @ifelse_conditional(x <= 0, 
+    @ifelse(x <= 0, 
       1,
       -1
       )
