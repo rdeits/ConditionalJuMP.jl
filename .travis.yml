@@ -33,4 +33,4 @@ script:
   #- julia -e 'Pkg.clone(pwd()); Pkg.build("ConditionalJuMP"); Pkg.test("ConditionalJuMP"; coverage=true)'
 after_success:
   # push coverage results to Codecov
-  - julia -e 'using Pkg; cd(Pkg.dir("ConditionalJuMP")); Pkg.add("Coverage"); using Coverage; Codecov.submit(Codecov.process_folder())'
+  - julia -e 'import Pkg; Pkg.add("Coverage"); using Coverage; Codecov.submit(Codecov.process_folder())'
