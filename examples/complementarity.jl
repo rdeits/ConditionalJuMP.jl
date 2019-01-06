@@ -1,16 +1,17 @@
 module Complementarity
 
 using JuMP, ConditionalJuMP, Cbc
-using Base.Test
+using Test
+using Pkg
 
 # A simple complementarity-based time-stepping rigid body simulation. All
 # notation is taken from Stewart & Trinkle "An Implicit Time-Stepping Scheme for
 # Rigid Body Dynamics with Coulomb Friction". This particular example solves
 # for all N timesteps simultaneously. That's not actually necessary, but it makes
-# the code a bit simpler to read. 
+# the code a bit simpler to read.
 #
 # The model consists of a point mass (visualized as a brick) moving in two dimensions
-# with gravity and a single planar surface at y = 0. 
+# with gravity and a single planar surface at y = 0.
 
 const h = 0.05
 const μ = 0.5
@@ -63,7 +64,7 @@ end
 
 """
 Simulate the system using the LCP update. This creates and solves a small
-model for every time step 1:N. 
+model for every time step 1:N.
 """
 function simulate(q0, v0, N)
     q, v = q0, v0
@@ -97,7 +98,7 @@ function optimize(q0, v0, N)::Vector{LCPUpdate{Float64}}
     end
     solve(m)
     getvalue.(results)
-end 
+end
 
 q0 = [-1, 0.5]
 v0 = [2, 0.5]
@@ -115,8 +116,8 @@ v = [r.v for r in results1]
 @test q[end] ≈ [-0.16892500000000002, 0]
 @test v[end] ≈ [0, 0]
 
-if Pkg.installed("DrakeVisualizer") !== nothing
-    @eval using DrakeVisualizer; 
+if haskey(Pkg.installed(), "DrakeVisualizer")
+    @eval using DrakeVisualizer;
     @eval using CoordinateTransformations
     @eval using GeometryTypes
     DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window()

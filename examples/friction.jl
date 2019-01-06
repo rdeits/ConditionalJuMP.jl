@@ -1,5 +1,5 @@
 using JuMP, ConditionalJuMP, Cbc
-using Base.Test
+using Test
 
 const viscosity = 100
 const stiffness = 100
@@ -8,9 +8,9 @@ const normal_force = stiffness * penetration
 const μ = 0.5
 const Δt = 0.05
 
-# A very simple stick-slip dynamics. Frictional force is equal to 
+# A very simple stick-slip dynamics. Frictional force is equal to
 # -(viscosity * velocity), clipped to lie within the friction cone
-# at ±(μ * normal_force). 
+# at ±(μ * normal_force).
 function dynamics(x)
     q = x[1]
     v = x[2]

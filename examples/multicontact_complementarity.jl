@@ -3,7 +3,8 @@ module Complementarity
 using Polyhedra
 using StaticArrays
 using JuMP, ConditionalJuMP, Cbc
-using Base.Test
+using Test
+using Pkg
 
 rot2(θ) = SMatrix{2, 2}(cos(θ), -sin(θ), sin(θ), cos(θ))
 
@@ -191,7 +192,7 @@ results2 = optimize(q0, v0, env, N)
 results_seeded = optimize(q0, v0, env, results1)
 @test all([r1.q ≈ r2.q for (r1, r2) in zip(results1, results_seeded)])
 
-if Pkg.installed("DrakeVisualizer") !== nothing
+if haskey(Pkg.installed(), "DrakeVisualizer")
     @eval using DrakeVisualizer;
     @eval using CoordinateTransformations
     DrakeVisualizer.any_open_windows() || DrakeVisualizer.new_window()
